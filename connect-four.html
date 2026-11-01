@@ -1,0 +1,1677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Connect Four · AI vs AI</title>
+<style>
+  :root{
+    --bg:#0b1020; --panel:#121a2e; --panel2:#0a1024; --line:#27324f;
+    --text:#e6ebf5; --muted:#8b97b5;
+    --red:#e5484d; --yellow:#f5c542;
+    --red-soft:#f0a5a7; --yellow-soft:#f0dca0;
+    --ts:#7a8496;
+    color-scheme: dark;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;
+    background:radial-gradient(1200px 700px at 50% -15%, #1c2748, #0b1020 60%);
+    color:var(--text);
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  .app{
+    display:flex;flex-direction:column;
+    height:100vh;
+    padding:12px;
+    gap:10px;
+  }
+
+  /* ---------- top bar ---------- */
+  .topbar{display:flex;flex-direction:column;gap:8px;flex:none}
+  .topbar-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .brand{font-weight:800;font-size:18px;letter-spacing:.2px}
+  .brand span{color:var(--muted);font-weight:500;font-size:12px;margin-left:4px}
+  .scoreboard{display:flex;gap:8px;margin-left:auto}
+  .score{display:flex;align-items:center;gap:7px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-variant-numeric:tabular-nums}
+  .score .lbl{color:var(--muted);font-size:11px}
+  .score .val{font-weight:800;font-size:15px}
+  .dot{width:11px;height:11px;border-radius:50%;display:inline-block;flex:none}
+  .dot.red{background:var(--red);box-shadow:0 0 8px rgba(229,72,77,.7)}
+  .dot.yellow{background:var(--yellow);box-shadow:0 0 8px rgba(245,197,66,.7)}
+  .controls{display:flex;flex-wrap:wrap;align-items:center;gap:6px;flex:1}
+  button{
+    background:var(--panel);color:var(--text);border:1px solid var(--line);
+    border-radius:8px;padding:6px 12px;font:inherit;font-size:12.5px;cursor:pointer;
+    transition:background .15s,border-color .15s,opacity .15s;
+  }
+  button:hover:not(:disabled){background:#1b2540;border-color:#3b4a72}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:linear-gradient(180deg,#2f6bff,#2350d8);border-color:#3f7bff;font-weight:600}
+  button.primary:hover:not(:disabled){background:linear-gradient(180deg,#3f7bff,#2b5ce8)}
+  .inline{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;margin-left:auto}
+  .inline + .inline{margin-left:0}
+  .inline input{width:64px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;color:var(--text);padding:4px 7px;font:inherit;font-size:12px}
+  .status{
+    background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    padding:7px 12px;font-size:12.5px;color:#b9c6e2;min-height:32px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+
+  /* ---------- 3-column layout ---------- */
+  .columns{
+    flex:1;
+    display:flex;
+    gap:14px;
+    min-height:0;
+    align-items:stretch;
+  }
+  .side{
+    flex:1 1 0;
+    min-width:240px;
+    min-height:0;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    overflow-y:auto;
+    scroll-behavior:smooth;
+  }
+
+  /* config card */
+  .config-card{
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:10px 12px;flex:none;
+  }
+  .card-head{display:flex;align-items:center;gap:8px;font-weight:700;margin-bottom:8px;font-size:13px}
+  .card-head .tag{
+    font-weight:600;font-size:10.5px;color:var(--muted);background:#0a1024;
+    border:1px solid var(--line);border-radius:999px;padding:1px 8px;margin-left:auto;
+  }
+  .field-row{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+  .field-row>label{width:64px;color:var(--muted);font-size:11.5px;flex:none}
+  .field-row>input,.field-row>select{flex:1;min-width:0}
+  .field-row-2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:5px}
+  .field-half{display:flex;align-items:center;gap:6px;min-width:0}
+  .field-half>label{color:var(--muted);font-size:11.5px;min-width:36px;flex:none}
+  .field-half>input,.field-half>select{flex:1;min-width:0}
+  .field-half input[type=checkbox]{flex:none;width:16px;height:16px;accent-color:#3f7bff}
+  input[type=text],input[type=password],input[type=number],select{
+    background:var(--panel2);border:1px solid var(--line);border-radius:6px;
+    color:var(--text);padding:5px 8px;font:inherit;font-size:12.5px;min-width:0;
+  }
+  input:focus,select:focus{outline:none;border-color:#3f7bff}
+
+  /* stream panel */
+  .stream-panel{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:12px;
+    display:flex;
+    flex-direction:column;
+    min-height:0;
+    overflow:hidden;
+    height:400px;
+    flex:0 0 auto;
+  }
+  .stream-header{
+    flex:none;display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:8px 12px;border-bottom:1px solid var(--line);font-size:12.5px;font-weight:700;
+  }
+  .stream-header .player-label{
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    min-width:0;flex:1;padding-right:6px;
+  }
+  .stream-header .tokens{
+    font-weight:500;color:var(--muted);font-size:11.5px;font-variant-numeric:tabular-nums;
+    flex:none;white-space:nowrap;
+  }
+  .stream-body{
+    flex:1 1 0;
+    min-height:0;
+    overflow-y:auto;
+    padding:8px 12px;
+    scrollbar-width:thin;
+  }
+  .stream-body::-webkit-scrollbar{width:9px}
+  .stream-body::-webkit-scrollbar-thumb{background:#27324f;border-radius:6px}
+  .stream-body::-webkit-scrollbar-thumb:hover{background:#33416a}
+
+  /* stream entries */
+  .ts{font-size:11px;color:var(--ts);margin-bottom:4px;font-variant-numeric:tabular-nums}
+  .turn-entry{padding:8px 0;border-bottom:1px dashed rgba(255,255,255,.06)}
+  .turn-entry:last-child{border-bottom:none}
+  .turn-entry details.reasoning summary{
+    cursor:pointer;user-select:none;font-size:11px;color:var(--muted);
+    list-style:none;padding:1px 0;
+  }
+  .turn-entry details.reasoning summary::-webkit-details-marker{display:none}
+  .turn-entry details.reasoning summary::before{content:'▸ ';font-size:10px}
+  .turn-entry details.reasoning[open] summary::before{content:'▾ '}
+  .turn-entry details.reasoning summary:hover{color:#b6c3de}
+  .turn-entry .reasoning-body{
+    margin-top:4px;padding:6px 9px;background:var(--panel2);border-radius:7px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:11.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word;
+  }
+  .turn-entry.p1 .reasoning-body{color:var(--red-soft)}
+  .turn-entry.p2 .reasoning-body{color:var(--yellow-soft)}
+  .turn-entry .move{margin-top:6px;font-weight:700;font-size:13px}
+  .turn-entry.p1 .move{color:var(--red)}
+  .turn-entry.p2 .move{color:var(--yellow)}
+  .turn-entry .note{
+    margin-top:5px;font-size:11px;color:#ffcf7a;font-style:italic;
+  }
+  .turn-entry .toolcall{margin-top:5px}
+  .turn-entry .commentary{margin-top:6px;font-size:12.5px;white-space:pre-wrap;word-break:break-word}
+  .turn-entry .toolcall details.reasoning summary{
+    color:#9fd3ff;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+
+  .event{padding:7px 0;border-bottom:1px dashed rgba(255,255,255,.04)}
+  .event:last-child{border-bottom:none}
+  .event .event-body{font-size:12px;font-style:italic;color:var(--muted)}
+  .event.win .event-body{color:#8ff0a4}
+  .event.draw .event-body{color:#cfc78a}
+  .event.note .event-body{color:#9fb0d6;font-style:normal}
+
+  /* board column + board */
+  .board-col{
+    flex:0 0 auto;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    min-height:0;
+  }
+  .board{
+    display:grid;
+    grid-template-columns:repeat(7,1fr);
+    grid-template-rows:repeat(6,1fr);
+    gap:6px;
+    padding:10px;
+    background:linear-gradient(180deg,#1d2848,#141c31);
+    border-radius:16px;
+    width:500px;
+    height:428px;
+    box-shadow:0 20px 60px rgba(0,0,0,.55), inset 0 0 0 1px var(--line);
+  }
+  .cell{
+    position:relative;border-radius:50%;
+    background:#080d1c;
+    box-shadow:inset 0 4px 8px rgba(0,0,0,.85), inset 0 -1px 0 rgba(255,255,255,.04);
+    transition:box-shadow .25s;
+  }
+  .cell.win{box-shadow:0 0 0 2px #fff,0 0 22px rgba(255,255,255,.5),inset 0 4px 8px rgba(0,0,0,.5)}
+  .piece{position:absolute;inset:6%;border-radius:50%;animation:drop .38s cubic-bezier(.35,1.35,.6,1) both}
+  .piece.red{background:radial-gradient(circle at 33% 27%, #ff9a9d, var(--red) 58%, #8e1b1f)}
+  .piece.yellow{background:radial-gradient(circle at 33% 27%, #ffeeaa, var(--yellow) 58%, #9c7a17)}
+  @keyframes drop{
+    from{transform:translateY(calc(var(--dist,0) * 116%))}
+    to{transform:translateY(0)}
+  }
+
+  @media (max-width:1000px){
+    .app{ height:auto; min-height:100vh; }
+    .columns{
+      flex-direction:column;
+      flex:0 0 auto;
+      overflow:visible;
+    }
+    .side{
+      flex:0 0 auto;
+      min-width:0;
+      min-height:0;
+      overflow-y:visible;
+    }
+    .board-col{ flex:0 0 auto; order:-1; }
+    .stream-panel{ height:260px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="topbar-row">
+      <div class="brand">Connect&nbsp;Four <span>AI&nbsp;vs&nbsp;AI</span></div>
+      <div class="scoreboard">
+        <div class="score"><span class="dot red"></span><span class="val" id="score1">0</span><span class="lbl" id="name1">Red</span></div>
+        <div class="score"><span class="dot yellow"></span><span class="val" id="score2">0</span><span class="lbl" id="name2">Yellow</span></div>
+        <div class="score"><span class="val" id="scoreD">0</span><span class="lbl">Draws</span></div>
+      </div>
+    </div>
+    <div class="topbar-row">
+      <div class="controls">
+        <button id="startBtn" class="primary">▶ Start series</button>
+        <button id="stopBtn" disabled>■ Stop</button>
+        <button id="resetScoresBtn">Reset scores</button>
+        <button id="resetContextBtn">Reset context</button>
+        <button id="clearLogBtn">Clear log</button>
+        <label class="inline">Countdown <input id="gameDelay" type="number" value="10" min="0" max="120" step="1"> s</label>
+        <label class="inline">Tool calls <input id="toolLimit" type="number" value="10" min="0" step="1"> / move</label>
+      </div>
+    </div>
+    <div class="status" id="status">Idle — configure both agents, then press Start.</div>
+  </header>
+
+  <div class="columns">
+    <aside class="side" id="side1">
+      <div class="config-card" id="card1"></div>
+      <div class="stream-panel" id="panel1">
+        <div class="stream-header">
+          <span class="player-label" id="label1">Player 1 · Red</span>
+          <span class="tokens" id="tokens1">0 tokens</span>
+        </div>
+        <div class="stream-body" id="stream1"></div>
+      </div>
+    </aside>
+
+    <main class="board-col">
+      <div class="board" id="board"></div>
+    </main>
+
+    <aside class="side" id="side2">
+      <div class="config-card" id="card2"></div>
+      <div class="stream-panel" id="panel2">
+        <div class="stream-header">
+          <span class="player-label" id="label2">Player 2 · Yellow</span>
+          <span class="tokens" id="tokens2">0 tokens</span>
+        </div>
+        <div class="stream-body" id="stream2"></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+const ROWS = 6, COLS = 7;
+// Piece colors double as player numbers (Red = Player 1), so code uses them
+// interchangeably and finds the other player with `3 - p`.
+const RED = 1, YELLOW = 2;
+const MAX_RETRIES = 3;
+const LS_KEY = "c4-ai-v1";
+
+/* ============================================================
+   Game engine
+   ============================================================ */
+class Game {
+  constructor(){
+    // Column-major: cols[c][r] is the piece at column c, row r, with r = 0 the
+    // bottom row. A column's array length is its fill height. All indices are
+    // 0-based; only prompts and UI text use 1-based numbers.
+    this.cols = Array.from({length: COLS}, () => []);
+    this.moves = [];
+    this.turn = RED;
+    this.over = false;
+    this.winner = 0;
+    this.winCells = null;
+  }
+  // Independent copy for the play_out analysis board; the real game is never
+  // touched by analysis.
+  clone(){
+    const g = new Game();
+    g.cols = this.cols.map(col => col.slice());
+    g.moves = this.moves.map(m => ({ ...m }));
+    g.turn = this.turn;
+    g.over = this.over;
+    g.winner = this.winner;
+    g.winCells = this.winCells && this.winCells.map(cell => cell.slice());
+    return g;
+  }
+  at(c, r){ const col = this.cols[c]; return (col && col[r]) || 0; }
+  height(c){ return this.cols[c].length; }
+  legal(){ const a = []; for (let c = 0; c < COLS; c++) if (this.cols[c].length < ROWS) a.push(c); return a; }
+  drop(c, p){ const r = this.cols[c].length; this.cols[c].push(p); this.moves.push({c, r, p}); return r; }
+  // Checks only lines through the piece just placed at (c, r); any earlier
+  // win would already have ended the game. Returns the connected cells (4+)
+  // for highlighting, or null.
+  checkWinFrom(c, r, p){
+    const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+    for (const [dc, dr] of dirs){
+      const cells = [[c, r]];
+      for (const s of [1, -1]){
+        let cc = c + dc*s, rr = r + dr*s;
+        while (cc >= 0 && cc < COLS && rr >= 0 && rr < ROWS && this.at(cc, rr) === p){
+          cells.push([cc, rr]); cc += dc*s; rr += dr*s;
+        }
+      }
+      if (cells.length >= 4) return cells;
+    }
+    return null;
+  }
+  // Board as sent to the models: top row printed first, 1-based column and
+  // row labels matching the numbering defined in rulesPrompt().
+  toText(){
+    const lines = [];
+    lines.push("    " + Array.from({length: COLS}, (_, i) => i + 1).join(" "));
+    for (let r = ROWS - 1; r >= 0; r--){
+      const row = [];
+      for (let c = 0; c < COLS; c++){
+        const v = this.at(c, r);
+        row.push(v === RED ? "R" : v === YELLOW ? "Y" : ".");
+      }
+      lines.push(" " + (r + 1) + "  " + row.join(" "));
+    }
+    return lines.join("\n");
+  }
+
+  // The methods below restate the position in forms that need no counting
+  // across grid lines: they add no analysis, only what is on the board.
+  // All numbers are 1-based, as in toText().
+
+  // Moves in play order as color + column, e.g. "R4 Y4 R3".
+  toMoveList(){
+    if (!this.moves.length) return "(none)";
+    return this.moves.map(m => (m.p === RED ? "R" : "Y") + (m.c + 1)).join(" ");
+  }
+
+  // One line per column, pieces listed bottom to top, with the row the next
+  // piece would land in (or "full").
+  toColumns(){
+    const lines = [];
+    for (let c = 0; c < COLS; c++){
+      const col = this.cols[c];
+      const pieces = col.length ? col.map(v => v === RED ? "R" : "Y").join(" ") : "(empty)";
+      const next = col.length < ROWS ? `next piece lands row ${col.length + 1}` : "full";
+      lines.push(`  ${c + 1}: ${pieces} → ${next}`);
+    }
+    return lines.join("\n");
+  }
+
+  // Each player's pieces as (column,row) pairs, ordered by column then row.
+  toPieceList(p){
+    const out = [];
+    for (let c = 0; c < COLS; c++){
+      for (let r = 0; r < this.cols[c].length; r++){
+        if (this.cols[c][r] === p) out.push(`(${c + 1},${r + 1})`);
+      }
+    }
+    return out.length ? out.join(" ") : "(none)";
+  }
+}
+
+/* ============================================================
+   Global state
+   ============================================================ */
+const state = {
+  running: false,
+  // "idle" | "in-game" | "between-games". "in-game" disables Reset context.
+  phase: "idle",
+  game: new Game(),
+  gameNum: 0,
+  scores: { 1: 0, 2: 0, draws: 0 },
+  // Per-player failure counts: attempts cut off by max_tokens, and turns that
+  // fell back to a random move. Cleared together with the scores.
+  stats: { 1: { truncated: 0, fallbacks: 0 }, 2: { truncated: 0, fallbacks: 0 } },
+  // What carries across games, until Reset context. Each turn starts a fresh
+  // conversation built from these plus the current game; earlier turns are
+  // not resent.
+  // records: finished Game objects in play order, shared by both players and
+  //   rendered from each player's point of view by recordLine().
+  // notes: each player's own notebook, rewritten by updateNotes() after
+  //   every game.
+  records: [],
+  notes: { 1: "", 2: "" },
+  // play_out calls allowed per move, read from the setting at series start
+  // (like `configs`). 0 means the tool is not offered at all.
+  toolLimit: 0,
+  tokens: { 1: { value: 0, estimated: false }, 2: { value: 0, estimated: false } },
+  // firstAppend: the next log entry should also scroll the whole side column
+  // to the bottom (set at load and after Clear log).
+  // autoFollow: the log panel is near the bottom, so new output keeps it there.
+  firstAppend: { 1: true, 2: true },
+  autoFollow: { 1: true, 2: true },
+  // AbortController of the in-flight chat request, used by Stop.
+  abort: null,
+};
+
+// Snapshot of the config cards taken at series start. Gameplay reads only
+// this, so edits made while a series runs (which still update the on-screen
+// labels via refreshPlayerLabels) take effect at the next Start.
+let configs = {
+  1: { endpoint:"", key:"", model:"", name:"Red",    reasoning:"", maxTokens:16000, stream:true },
+  2: { endpoint:"", key:"", model:"", name:"Yellow", reasoning:"", maxTokens:16000, stream:true },
+};
+
+class StopError extends Error {
+  constructor(){ super("stopped"); this.name = "StopError"; }
+}
+
+/* ============================================================
+   DOM references
+   ============================================================ */
+const $ = (s, r = document) => r.querySelector(s);
+const boardEl = $("#board");
+const statusEl = $("#status");
+const startBtn = $("#startBtn");
+const stopBtn = $("#stopBtn");
+const resetScoresBtn = $("#resetScoresBtn");
+const resetContextBtn = $("#resetContextBtn");
+const clearLogBtn = $("#clearLogBtn");
+const score1El = $("#score1");
+const score2El = $("#score2");
+const scoreDEl = $("#scoreD");
+const name1El = $("#name1");
+const name2El = $("#name2");
+const gameDelayEl = $("#gameDelay");
+const toolLimitEl = $("#toolLimit");
+
+function mk(tag, cls, text){
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+function setStatus(s){ statusEl.textContent = s; }
+function pad2(n){ return String(n).padStart(2, "0"); }
+function formatTs(ms){
+  const d = new Date(ms);
+  return `${pad2(d.getMonth()+1)}/${pad2(d.getDate())}/${d.getFullYear()} ` +
+         `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+/* ============================================================
+   Player info helpers
+   ============================================================ */
+function playerInfo(p){
+  const other = 3 - p;
+  return {
+    colorName: p === 1 ? "Red" : "Yellow",
+    otherColor: other === 1 ? "Red" : "Yellow",
+    other,
+  };
+}
+
+/* ============================================================
+   Config cards
+   ============================================================ */
+function buildConfigCard(p){
+  const card = document.getElementById("card" + p);
+  const cls = p === 1 ? "red" : "yellow";
+  const colorName = p === 1 ? "Red" : "Yellow";
+  card.innerHTML = `
+    <div class="card-head">
+      <span class="dot ${cls}"></span>Player ${p}
+      <span class="tag">${colorName}</span>
+    </div>
+    <div class="field-row"><label>Endpoint</label><input class="p-endpoint" type="text" placeholder="http://10.0.0.5:1234/v1"></div>
+    <div class="field-row"><label>API key</label><input class="p-key" type="password" placeholder="sk-… (memory only)"></div>
+    <div class="field-row"><label>Model</label><input class="p-model" type="text" placeholder="gpt-4o-mini"></div>
+    <div class="field-row"><label>Name</label><input class="p-name" type="text" value="${colorName}"></div>
+    <div class="field-row"><label>Reasoning</label>
+      <select class="p-reasoning">
+        <option value="">default</option>
+        <option value="none">none</option>
+        <option value="low">low</option>
+        <option value="medium">medium</option>
+        <option value="high">high</option>
+      </select>
+    </div>
+    <div class="field-row-2">
+      <div class="field-half"><label>Max tok</label><input class="p-maxtok" type="number" value="16000" step="50" min="0"></div>
+      <div class="field-half"><label>Stream</label><input class="p-stream" type="checkbox" checked></div>
+    </div>
+  `;
+}
+buildConfigCard(1);
+buildConfigCard(2);
+
+function readConfig(p){
+  const card = document.getElementById("card" + p);
+  return {
+    endpoint: card.querySelector(".p-endpoint").value.trim(),
+    key:      card.querySelector(".p-key").value.trim(),
+    model:    card.querySelector(".p-model").value.trim(),
+    name:     card.querySelector(".p-name").value.trim() || (p === 1 ? "Red" : "Yellow"),
+    reasoning: card.querySelector(".p-reasoning").value,
+    maxTokens: parseInt(card.querySelector(".p-maxtok").value, 10) || 0,
+    stream:   card.querySelector(".p-stream").checked,
+  };
+}
+
+/* ============================================================
+   Settings persistence
+   ============================================================ */
+function saveSettings(){
+  try {
+    const out = { delay: gameDelayEl.value, toolLimit: toolLimitEl.value, players: {} };
+    for (const p of [1, 2]){
+      const c = readConfig(p);
+      // The API key is deliberately not persisted; it lives only in the input.
+      out.players[p] = {
+        endpoint: c.endpoint, model: c.model, name: c.name,
+        reasoning: c.reasoning, maxTokens: c.maxTokens, stream: c.stream,
+      };
+    }
+    localStorage.setItem(LS_KEY, JSON.stringify(out));
+  } catch (e) {}
+}
+function loadSettings(){
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(LS_KEY) || "null"); } catch (e) {}
+  if (!s) return;
+  if (s.delay != null){
+    let d = parseInt(s.delay, 10);
+    if (isNaN(d) || d < 0) d = 10;
+    if (d > 100) d = Math.round(d / 1000);
+    gameDelayEl.value = Math.min(Math.max(d, 0), 120);
+  }
+  if (s.toolLimit != null){
+    const t = parseInt(s.toolLimit, 10);
+    if (!isNaN(t) && t >= 0) toolLimitEl.value = t;
+  }
+  for (const p of [1, 2]){
+    const cfg = s.players && s.players[p];
+    if (!cfg) continue;
+    const card = document.getElementById("card" + p);
+    if (cfg.endpoint) card.querySelector(".p-endpoint").value = cfg.endpoint;
+    if (cfg.model)    card.querySelector(".p-model").value    = cfg.model;
+    if (cfg.name)     card.querySelector(".p-name").value     = cfg.name;
+    if (cfg.reasoning != null) card.querySelector(".p-reasoning").value = cfg.reasoning;
+    if (cfg.maxTokens != null) card.querySelector(".p-maxtok").value = cfg.maxTokens;
+    if (cfg.stream != null) card.querySelector(".p-stream").checked = !!cfg.stream;
+  }
+}
+
+document.addEventListener("input", (e) => {
+  if (e.target.closest(".config-card") || e.target === gameDelayEl || e.target === toolLimitEl){
+    saveSettings();
+    refreshPlayerLabels();
+  }
+});
+document.addEventListener("change", (e) => {
+  if (e.target.closest(".config-card")){
+    saveSettings();
+    refreshPlayerLabels();
+  }
+});
+
+/* ============================================================
+   Board rendering
+   ============================================================ */
+// Rebuilds the whole board each call. `animate` = {c, r} names the piece just
+// dropped; only it plays the drop animation, starting r + 1 cell heights above
+// its slot (--dist feeds the `drop` keyframes). All other pieces render static.
+function renderBoard(animate){
+  const g = state.game;
+  boardEl.innerHTML = "";
+  const winSet = new Set();
+  if (g && g.winCells) for (const [c, r] of g.winCells) winSet.add(c + "," + r);
+  for (let r = 0; r < ROWS; r++){
+    for (let c = 0; c < COLS; c++){
+      const cell = mk("div", "cell");
+      cell.style.gridColumn = String(c + 1);
+      // Grid rows count from the top; board rows count from the bottom.
+      cell.style.gridRow = String(ROWS - r);
+      const v = g ? g.at(c, r) : 0;
+      if (v){
+        const piece = mk("div", "piece " + (v === RED ? "red" : "yellow"));
+        if (animate && animate.c === c && animate.r === r){
+          piece.style.setProperty("--dist", String(-(r + 1)));
+        } else {
+          piece.style.animation = "none";
+        }
+        cell.appendChild(piece);
+      }
+      if (winSet.has(c + "," + r)) cell.classList.add("win");
+      boardEl.appendChild(cell);
+    }
+  }
+}
+
+/* ============================================================
+   Deterministic board sizing + stream heights
+   ============================================================ */
+// Sizes the board in JS so it keeps a 7:6 ratio at the largest size the
+// columns area allows. Wide layout: board fills the available height unless
+// that would squeeze either side column below 240px, and both stream panels
+// are set to the board's height. Narrow layout (stacked, matches the CSS
+// media query): board capped at 460px wide, stream panels fixed at 260px.
+// Returns early while the container has no real size yet.
+function layoutBoard(){
+  const cols = document.querySelector('.columns');
+  if (!cols) return;
+  const rect = cols.getBoundingClientRect();
+  if (rect.width < 80) return;
+
+  const isNarrow = window.matchMedia('(max-width: 1000px)').matches;
+
+  if (isNarrow){
+    const boardW = Math.min(rect.width - 4, 460);
+    const boardH = Math.round(boardW * 6 / 7);
+    boardEl.style.width  = boardW + 'px';
+    boardEl.style.height = boardH + 'px';
+    for (const p of [1, 2]){
+      const panel = document.getElementById('panel' + p);
+      if (panel) panel.style.height = '260px';
+    }
+    return;
+  }
+
+  if (rect.height < 80) return;
+
+  const gap = 14;
+  const minSide = 240;
+
+  let boardH = rect.height - 2;
+  let boardW = boardH * 7 / 6;
+
+  const maxBoardW = rect.width - 2 * minSide - 2 * gap;
+  if (boardW > maxBoardW){
+    boardW = Math.max(220, maxBoardW);
+    boardH = Math.round(boardW * 6 / 7);
+  }
+
+  boardEl.style.width  = Math.round(boardW) + 'px';
+  boardEl.style.height = Math.round(boardH) + 'px';
+
+  for (const p of [1, 2]){
+    const panel = document.getElementById('panel' + p);
+    if (panel) panel.style.height = Math.round(boardH) + 'px';
+  }
+}
+
+const columnsEl = document.querySelector('.columns');
+if (window.ResizeObserver && columnsEl){
+  new ResizeObserver(() => layoutBoard()).observe(columnsEl);
+}
+window.addEventListener('resize', layoutBoard);
+
+/* ============================================================
+   Scroll / auto-follow
+   ============================================================ */
+function snapSideToBottom(p){
+  const side = document.getElementById("side" + p);
+  if (side) side.scrollTop = side.scrollHeight;
+}
+
+// Auto-follow stays on while the user is within 150px of the bottom of the
+// log; scrolling further up pauses it until they scroll back down.
+function checkAutoFollow(p){
+  const el = document.getElementById("stream" + p);
+  if (!el) return;
+  const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+  state.autoFollow[p] = dist < 150;
+}
+
+for (const p of [1, 2]){
+  const el = document.getElementById("stream" + p);
+  if (el){
+    el.addEventListener("scroll", () => checkAutoFollow(p), { passive: true });
+  }
+}
+
+function autoScrollStream(p){
+  if (!state.autoFollow[p]) return;
+  const el = document.getElementById("stream" + p);
+  if (!el) return;
+  el.scrollTop = el.scrollHeight;
+}
+
+/* ============================================================
+   Stream entries
+   ============================================================ */
+function collapseAllReasoning(){
+  document.querySelectorAll(".stream-body details.reasoning[open]").forEach(d => {
+    d.open = false;
+  });
+}
+
+function appendEvent(p, text, kind){
+  const body = document.getElementById("stream" + p);
+  const e = mk("div", "event" + (kind ? " " + kind : ""));
+  e.appendChild(mk("div", "ts", formatTs(Date.now())));
+  e.appendChild(mk("div", "event-body", text));
+  body.appendChild(e);
+
+  if (state.firstAppend[p]){
+    state.firstAppend[p] = false;
+    snapSideToBottom(p);
+    body.scrollTop = body.scrollHeight;
+    state.autoFollow[p] = true;
+  } else {
+    autoScrollStream(p);
+  }
+}
+
+// Opens a log entry for one move (which may span several calls when play_out
+// is used) or one notes update. Earlier collapsible sections in both panels
+// are collapsed so only the current entry's are expanded.
+function startTurnEntry(p){
+  collapseAllReasoning();
+
+  const body = document.getElementById("stream" + p);
+  const entry = mk("div", "turn-entry p" + p);
+  entry.appendChild(mk("div", "ts", formatTs(Date.now())));
+
+  const details = document.createElement("details");
+  details.className = "reasoning";
+  details.open = true;
+  const summary = document.createElement("summary");
+  summary.textContent = "reasoning";
+  const reasonBody = mk("div", "reasoning-body");
+  details.appendChild(summary);
+  details.appendChild(reasonBody);
+  entry.appendChild(details);
+
+  const moveEl = mk("div", "move");
+  entry.appendChild(moveEl);
+
+  body.appendChild(entry);
+
+  if (state.firstAppend[p]){
+    state.firstAppend[p] = false;
+    snapSideToBottom(p);
+    body.scrollTop = body.scrollHeight;
+    state.autoFollow[p] = true;
+  } else {
+    autoScrollStream(p);
+  }
+
+  return { entry, reasonBody, moveEl };
+}
+
+function appendNote(entry, text){
+  const n = mk("div", "note", text);
+  entry.appendChild(n);
+}
+
+// Collapsible section styled like the reasoning sections.
+function reasoningSection(label, text, open){
+  const details = document.createElement("details");
+  details.className = "reasoning";
+  details.open = open;
+  const summary = document.createElement("summary");
+  summary.textContent = label;
+  details.appendChild(summary);
+  details.appendChild(mk("div", "reasoning-body", text));
+  return details;
+}
+
+// One play_out call in the log: the summary line, with the exact result the
+// model received collapsed underneath.
+function toolCallLine(summary, result){
+  const wrap = mk("div", "toolcall");
+  wrap.appendChild(reasoningSection(summary, result, false));
+  return wrap;
+}
+
+function refreshPlayerLabels(){
+  const c1 = readConfig(1), c2 = readConfig(2);
+  const fmt = (p, c) => {
+    const parts = [`Player ${p}`, c.name];
+    if (c.model) parts.push(c.model);
+    return parts.join(" · ");
+  };
+  document.getElementById("label1").textContent = fmt(1, c1);
+  document.getElementById("label2").textContent = fmt(2, c2);
+  name1El.textContent = c1.name;
+  name2El.textContent = c2.name;
+}
+
+function updateTokenDisplay(p){
+  const t = state.tokens[p];
+  const v = Math.round(t.value || 0).toLocaleString();
+  // Failure counts are appended only once nonzero.
+  const s = state.stats[p];
+  let text = v + " tokens" + (t.estimated ? " (est)" : "");
+  if (s.truncated) text += ` · ${s.truncated} cut off`;
+  if (s.fallbacks) text += ` · ${s.fallbacks} random`;
+  document.getElementById("tokens" + p).textContent = text;
+}
+
+function estimateTokens(messages){
+  let chars = 0;
+  for (const m of messages){
+    if (!m) continue;
+    if (typeof m.content === "string") chars += m.content.length;
+    else if (Array.isArray(m.content)){
+      for (const part of m.content) if (part && typeof part.text === "string") chars += part.text.length;
+    }
+    // Within a tool-call turn, assistant messages also carry reasoning and
+    // tool-call arguments.
+    for (const k of ["reasoning_content", "reasoning"]) if (typeof m[k] === "string") chars += m[k].length;
+    if (Array.isArray(m.tool_calls)) for (const tc of m.tool_calls) chars += (tc.function?.arguments || "").length;
+  }
+  return Math.round(chars / 4);
+}
+
+// The displayed count is the prompt size of the latest call (a move or a
+// notes update), not a running total. Without a usage report it is
+// estimated from the message text at ~4 chars per token and marked "(est)".
+function updateTokensAfterCall(p, usage, sentMessages){
+  let value = 0, estimated = true;
+  if (usage){
+    const pt = usage.prompt_tokens ?? usage.promptTokens ?? usage.input_tokens;
+    if (typeof pt === "number" && pt >= 0){ value = pt; estimated = false; }
+  }
+  if (estimated) value = estimateTokens(sentMessages);
+  state.tokens[p] = { value, estimated };
+  updateTokenDisplay(p);
+}
+
+/* ============================================================
+   Prompts
+   ============================================================ */
+// Identity and rules, shared by every call. Used alone as the system prompt
+// for notes updates, whose output instruction is in the user message.
+// The opponent's name and model come from the series snapshot in `configs`.
+function rulesPrompt(p, cfg){
+  const { colorName, other, otherColor } = playerInfo(p);
+  const oppCfg = configs[other];
+  return `You are ${cfg.name}, Player ${p} (${colorName}), running on model ${cfg.model || "unknown"}. You are playing Connect Four against ${oppCfg.name}, Player ${other} (${otherColor}), running on model ${oppCfg.model || "unknown"}.
+
+Game play:
+- Board is 7 columns × 6 rows. Columns 1-7 left to right. Row 1 is the bottom row, row 6 the top.
+- On your turn you pick a non-full column. Your piece drops to the lowest empty row in that column.
+- Four of your pieces in a row — horizontal, vertical, or diagonal — wins.
+- If the board fills with no winner, the game is a draw.`;
+}
+
+// System prompt for move calls: the rules, the play_out allowance when the
+// tool is offered, and the reply format (commentary shared with the opponent
+// as table talk, then a final line with the column; see parseReply).
+function movePrompt(p, cfg){
+  const tool = state.toolLimit > 0 ? `
+
+Analysis tool:
+You may call play_out at most ${state.toolLimit} times per move. It plays a sequence of columns from the current position on a separate analysis board and shows the result; it does not affect the real game. Each result tells you how many calls remain.` : "";
+  return rulesPrompt(p, cfg) + tool + `
+
+Output format:
+${tool ? "When you have decided, write" : "Write"} your commentary for this move, a few sentences at most. Your opponent will see it, and you will see theirs, so you may talk to each other. Then end your reply with a final line that is exactly one integer between 1 and 7: the column number for your move.`;
+}
+
+// One finished game as a single line from player p's point of view. `n` is
+// the game's 1-based position in state.records, which is the only game
+// numbering the models see.
+function recordLine(p, rec, n){
+  const { colorName } = playerInfo(p);
+  const order = rec.moves[0].p === p ? "moved first" : "moved second";
+  let result;
+  if (rec.winner){
+    const cells = [...rec.winCells].sort((a, b) => a[0] - b[0] || a[1] - b[1])
+      .map(([c, r]) => `(${c + 1},${r + 1})`).join(" ");
+    result = `${rec.winner === RED ? "Red" : "Yellow"} won with ${cells} after ${rec.moves.length} moves.`;
+  } else {
+    result = "draw, board full.";
+  }
+  return `Game ${n}: you were ${colorName}, ${order}. Moves: ${rec.toMoveList()}. Result: ${result}`;
+}
+
+function notesText(p){
+  return state.notes[p] || "(none yet)";
+}
+
+// Single user message for a turn, ordered so everything before the current
+// game stays identical across a game's turns (prompt-cache friendly):
+// previous game records, then the player's notes, then the current position.
+function stateMessage(p, g){
+  const L = [];
+  L.push("Previous games:");
+  if (state.records.length){
+    state.records.forEach((rec, i) => L.push(recordLine(p, rec, i + 1)));
+  } else {
+    L.push("(none yet)");
+  }
+  L.push("");
+  L.push("Your notes from previous games:");
+  L.push(notesText(p));
+  L.push("");
+  L.push(`Current game (game ${state.records.length + 1}):`);
+  L.push(positionText(g, "Current board"));
+  L.push("");
+  L.push(tableTalk(p, g));
+  L.push("");
+  L.push("It is your turn. Write your commentary, then end with a final line that is exactly the column number you want to play.");
+  return L.join("\n");
+}
+
+// The game's commentary from both players in move order, from player p's
+// point of view. Comes from the `say` field playOneGame sets on each move;
+// moves without commentary are skipped. Not part of game records: it is
+// shown during the game and once more in the notes update after it.
+function tableTalk(p, g){
+  const L = ["Table talk this game:"];
+  g.moves.forEach((m, i) => {
+    if (!m.say) return;
+    const who = (m.p === RED ? "Red" : "Yellow") + (m.p === p ? " (you)" : "");
+    const [first, ...rest] = m.say.split("\n");
+    L.push(`  ${who}, move ${i + 1}: ${first}`);
+    for (const line of rest) L.push("    " + line);
+  });
+  if (L.length === 1) L.push("  (none yet)");
+  return L.join("\n");
+}
+
+// A position in every representation the models get: move list, last move,
+// column stacks, piece coordinates, and the grid. Shared by the turn message
+// and play_out results so both always look the same.
+function positionText(g, boardLabel){
+  const L = [];
+  const last = g.moves[g.moves.length - 1];
+  L.push("Move list: " + g.toMoveList());
+  L.push(last
+    ? `Last move: ${last.p === RED ? "Red" : "Yellow"} played column ${last.c + 1} (landed row ${last.r + 1})`
+    : "Last move: none, this is the first move of the game");
+  L.push("");
+  L.push("Columns, bottom to top:");
+  L.push(g.toColumns());
+  L.push("");
+  L.push("Pieces as (column,row):");
+  L.push("  Red:    " + g.toPieceList(RED));
+  L.push("  Yellow: " + g.toPieceList(YELLOW));
+  L.push("");
+  L.push(`${boardLabel}. Y=Yellow. R=Red.`);
+  L.push(g.toText());
+  return L.join("\n");
+}
+
+/* ============================================================
+   play_out analysis tool
+   ============================================================ */
+// The only tool offered. It replays columns on a copy of the current game and
+// reports positions and rule outcomes (landing cells, illegal moves, wins,
+// draws). It deliberately never evaluates: no threats, no scores, no
+// suggestions. Which lines to examine is the model's own problem.
+const PLAY_OUT_TOOL = {
+  type: "function",
+  function: {
+    name: "play_out",
+    description: "Analysis board. Plays a sequence of columns from the current position, alternating moves starting with you, and shows where each piece landed and the resulting position. Stops at an illegal move or when the game ends. It does not evaluate positions.",
+    parameters: {
+      type: "object",
+      properties: {
+        moves: {
+          type: "array",
+          items: { type: "integer", minimum: 1, maximum: 7 },
+          description: "Columns 1-7 in play order, starting with your move.",
+        },
+      },
+      required: ["moves"],
+    },
+  },
+};
+
+// Validates and runs one play_out call against game `g`. Returns
+// { ok, text, summary }: `text` is the tool result body (without the budget
+// line), `summary` the short form for the log. Malformed arguments return
+// ok: false with an error message; they still count against the call cap.
+function runPlayOut(g, name, args){
+  if (name !== "play_out") return { ok: false, text: `Error: unknown tool "${name}". The only tool is play_out.`, summary: `unknown tool "${name}"` };
+  let parsed;
+  try { parsed = JSON.parse(args || "{}"); } catch (e) {
+    return { ok: false, text: "Error: arguments are not valid JSON.", summary: "invalid JSON arguments" };
+  }
+  const moves = parsed && parsed.moves;
+  if (!Array.isArray(moves) || !moves.every(m => Number.isInteger(m) && m >= 1 && m <= 7)){
+    return { ok: false, text: "Error: moves must be an array of integers 1-7.", summary: "invalid moves" };
+  }
+
+  const a = g.clone();
+  const played = [], landed = [];
+  let outcome = null;
+  for (let i = 0; i < moves.length; i++){
+    const c = moves[i] - 1, p = a.turn;
+    const tag = (p === RED ? "R" : "Y") + moves[i];
+    if (a.height(c) >= ROWS){
+      outcome = `Stopped: move ${i + 1} (${tag}) is illegal, column ${moves[i]} is full.`;
+      break;
+    }
+    const r = a.drop(c, p);
+    played.push(`${tag} → (${c + 1},${r + 1})`);
+    landed.push(`(${c + 1},${r + 1})`);
+    const win = a.checkWinFrom(c, r, p);
+    if (win){
+      const cells = [...win].sort((x, y) => x[0] - y[0] || x[1] - y[1]).map(([cc, rr]) => `(${cc + 1},${rr + 1})`).join(" ");
+      outcome = `${p === RED ? "Red" : "Yellow"} wins with ${cells}.`;
+      if (i < moves.length - 1) outcome += " Remaining moves were not played.";
+      break;
+    }
+    if (a.moves.length >= ROWS * COLS){
+      outcome = "Draw: board full.";
+      if (i < moves.length - 1) outcome += " Remaining moves were not played.";
+      break;
+    }
+    a.turn = p === RED ? YELLOW : RED;
+  }
+
+  const L = [];
+  L.push("Played: " + (played.length ? played.join(", ") : "(nothing)"));
+  if (outcome) L.push(outcome);
+  L.push("");
+  L.push(positionText(a, "Resulting board"));
+  const summary = `[${moves.join(", ")}] → ` + (landed.length ? "landed " + landed.join(" ") : "nothing played") + (outcome ? ` · ${outcome}` : "");
+  return { ok: true, text: L.join("\n"), summary };
+}
+
+// Budget line appended to every tool result, including errors.
+function budgetLine(left){
+  if (left <= 0) return "No tool calls remain; reply with your move.";
+  return `${left} tool call${left === 1 ? "" : "s"} remain${left === 1 ? "s" : ""}`;
+}
+
+/* ============================================================
+   Reply parsing
+   ============================================================ */
+// The move is the last non-empty line, which must be exactly one digit 1-7;
+// everything before it is commentary. Anything else on the last line
+// ("Column 4", "**4**", "4.") returns null and triggers a re-prompt.
+// Returns { move, commentary } or null.
+function parseReply(raw){
+  const lines = String(raw || "").trim().split("\n");
+  const m = lines[lines.length - 1].trim().match(/^([1-7])$/);
+  if (!m) return null;
+  return { move: parseInt(m[1], 10), commentary: lines.slice(0, -1).join("\n").trim() };
+}
+
+/* ============================================================
+   Transport
+   ============================================================ */
+// Parses an OpenAI-style SSE stream line by line, reading only `data:` lines
+// of the first choice. Unparseable lines are skipped; an `error` payload
+// throws. Reasoning arrives as `reasoning_content` or `reasoning` depending on
+// the server; reasoningField records which key was used so getMove can send
+// reasoning back under the same key within a tool-call turn. Tool calls arrive
+// as fragments keyed by `index` (id and name once, arguments in pieces) and
+// are reassembled here.
+async function readSSE(res, onDelta){
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "", text = "", reasoning = "", reasoningField = null, usage = null, finishReason = null;
+  const calls = [];
+  while (true){
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf("\n")) >= 0){
+      const line = buf.slice(0, idx).trim();
+      buf = buf.slice(idx + 1);
+      if (!line.startsWith("data:")) continue;
+      const payload = line.slice(5).trim();
+      if (payload === "[DONE]") continue;
+      let json;
+      try { json = JSON.parse(payload); } catch (e) { continue; }
+      if (json.error) throw new Error(json.error.message || "stream error");
+      if (json.usage) usage = json.usage;
+      // finish_reason is null on every chunk except the last one of the choice.
+      if (json.choices?.[0]?.finish_reason) finishReason = json.choices[0].finish_reason;
+      const d = json.choices?.[0]?.delta || json.choices?.[0]?.message || {};
+      let rc = null, field = null;
+      if (typeof d.reasoning_content === "string" && d.reasoning_content){
+        rc = d.reasoning_content; field = "reasoning_content";
+      } else if (typeof d.reasoning === "string" && d.reasoning){
+        rc = d.reasoning; field = "reasoning";
+      }
+      if (rc){
+        reasoning += rc;
+        if (!reasoningField) reasoningField = field;
+        onDelta("reasoning", rc);
+      }
+      if (typeof d.content === "string" && d.content){
+        text += d.content;
+        onDelta("content", d.content);
+      }
+      if (Array.isArray(d.tool_calls)){
+        for (const tc of d.tool_calls){
+          // Fragments without `index` belong to the latest call, unless they
+          // carry a different id, which starts a new call.
+          let i = tc.index;
+          if (i == null){
+            i = Math.max(calls.length - 1, 0);
+            if (tc.id && calls[i] && calls[i].id && calls[i].id !== tc.id) i = calls.length;
+          }
+          const c = calls[i] || (calls[i] = { id: "", name: "", arguments: "" });
+          if (tc.id) c.id = tc.id;
+          if (tc.function?.name && !c.name) c.name = tc.function.name;
+          if (tc.function?.arguments != null) c.arguments += argText(tc.function.arguments);
+        }
+      }
+    }
+  }
+  return { text, reasoning, reasoningField, usage, finishReason, toolCalls: calls.filter(Boolean) };
+}
+
+// Tool-call arguments are a JSON string per the API; some servers send an
+// already-parsed object, which is normalized back to a string.
+function argText(a){
+  return typeof a === "string" ? a : JSON.stringify(a);
+}
+
+// One chat-completions call, always routed through serve.py's same-origin
+// /proxy. The endpoint may be a base URL (".../v1") or the full
+// ".../chat/completions" URL. `tools` (optional) is the tool list to offer.
+// Returns { text, reasoning, reasoningField, usage, finishReason, toolCalls }
+// whether or not the response was streamed; finishReason is "length" when
+// max_tokens cut it off, and toolCalls is [{ id, name, arguments }].
+async function chat(cfg, messages, onDelta, tools){
+  const ctrl = new AbortController();
+  state.abort = ctrl;
+
+  const base = cfg.endpoint.replace(/\/+$/, "");
+  const upstream = /\/chat\/completions$/.test(base) ? base : base + "/chat/completions";
+  const url = "/proxy?url=" + encodeURIComponent(upstream);
+
+  const body = { model: cfg.model, messages };
+  if (cfg.reasoning) body.reasoning_effort = cfg.reasoning;
+  if (cfg.maxTokens > 0) body.max_tokens = cfg.maxTokens;
+  if (tools && tools.length) body.tools = tools;
+  if (cfg.stream){
+    body.stream = true;
+    body.stream_options = { include_usage: true };
+  }
+
+  const headers = { "Content-Type": "application/json" };
+  if (cfg.key) headers["Authorization"] = "Bearer " + cfg.key;
+
+  let res;
+  try {
+    res = await fetch(url, { method: "POST", signal: ctrl.signal, headers, body: JSON.stringify(body) });
+  } catch (e){
+    if (e.name === "AbortError") throw e;
+    throw new Error(`${cfg.name}: network error — ${e.message}. Is the local proxy running?`);
+  }
+
+  if (!res.ok){
+    let detail = "";
+    try { detail = (await res.text()).slice(0, 400); } catch (e) {}
+    throw new Error(`${cfg.name}: HTTP ${res.status} ${res.statusText}${detail ? " — " + detail : ""}`);
+  }
+
+  // A server may ignore `stream: true` and answer with plain JSON, so the
+  // response content type decides which parser runs.
+  const ct = (res.headers.get("content-type") || "").toLowerCase();
+  if (cfg.stream && ct.includes("text/event-stream")){
+    return await readSSE(res, onDelta);
+  }
+
+  const data = await res.json();
+  if (data.error) throw new Error(`${cfg.name}: ${data.error.message || JSON.stringify(data.error)}`);
+  const msg = data.choices?.[0]?.message || {};
+  let text = "";
+  if (typeof msg.content === "string") text = msg.content;
+  else if (Array.isArray(msg.content)) text = msg.content.map(x => x.text || "").join("");
+  let reasoning = "", reasoningField = null;
+  if (typeof msg.reasoning_content === "string" && msg.reasoning_content){
+    reasoning = msg.reasoning_content; reasoningField = "reasoning_content";
+  } else if (typeof msg.reasoning === "string" && msg.reasoning){
+    reasoning = msg.reasoning; reasoningField = "reasoning";
+  }
+  const toolCalls = (Array.isArray(msg.tool_calls) ? msg.tool_calls : []).map(tc => ({
+    id: tc.id || "", name: tc.function?.name || "", arguments: argText(tc.function?.arguments ?? ""),
+  }));
+  if (reasoning) onDelta("reasoning", reasoning);
+  if (text) onDelta("content", text);
+  return { text, reasoning, reasoningField, usage: data.usage || null,
+           finishReason: data.choices?.[0]?.finish_reason || null, toolCalls };
+}
+
+/* ============================================================
+   Turn execution
+   ============================================================ */
+// Asks player p for a move. Each turn is one fresh conversation that starts
+// with the system prompt and a single stateMessage carrying past records,
+// notes, and the current position; tool exchanges and retries are appended
+// within the turn. Nothing from the turn is kept afterwards.
+//
+// Within the turn the model may call play_out up to state.toolLimit times.
+// Protocol:
+// - A response containing tool calls is a tool step: the calls run (any text
+//   is ignored) and the turn continues. Every call counts against the cap,
+//   malformed ones included, so the loop always ends. Once the cap is used
+//   up, requests are sent without the tool.
+// - A response without tool calls is the final answer, parsed by parseReply.
+//   Failed answers are retried up to MAX_RETRIES times; retries keep the
+//   turn's tool exchanges and do not reset the cap. A generation cut off by
+//   max_tokens is one failed attempt (unless it is an answer that still
+//   parses as a legal move). A response that calls a tool when none was
+//   offered also counts as a failed attempt; that rule is what bounds a model
+//   that ignores the withdrawal.
+// - After MAX_RETRIES failed attempts, a random legal column is played.
+// Reasoning is sent back on the turn's assistant messages under the key the
+// server used, so the model keeps its line of thought across tool calls.
+async function getMove(p, g){
+  const cfg = configs[p];
+  const { entry, reasonBody: firstReasonBody, moveEl } = startTurnEntry(p);
+  // Everything in the entry is shown in order, above the final move line.
+  const put = el => { entry.insertBefore(el, moveEl); return el; };
+
+  const msgs = [
+    { role: "system", content: movePrompt(p, cfg) },
+    { role: "user", content: stateMessage(p, g) },
+  ];
+
+  const legalCols = g.legal();
+  const legalHuman = legalCols.map(c => c + 1);
+  let callsLeft = state.toolLimit;
+  let callSeq = 0;
+  let generation = 0;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; ){
+    // One reasoning section per generation; the first was made by startTurnEntry.
+    // Later sections are created on the first reasoning text, so generations
+    // without reasoning add no empty sections.
+    let reasonBody = generation++ === 0 ? firstReasonBody : null;
+    const ensureBody = () => {
+      if (!reasonBody){
+        collapseAllReasoning();
+        reasonBody = put(reasoningSection("reasoning", "", true)).querySelector(".reasoning-body");
+      }
+      return reasonBody;
+    };
+
+    const offered = callsLeft > 0;
+    // Live reasoning display keeps only the last 20,000 characters.
+    const res = await chat(cfg, msgs, (type, chunk) => {
+      if (type === "reasoning"){
+        ensureBody().textContent += chunk;
+        if (reasonBody.textContent.length > 20000) reasonBody.textContent = reasonBody.textContent.slice(-20000);
+        autoScrollStream(p);
+      }
+    }, offered ? [PLAY_OUT_TOOL] : null);
+
+    // Stop may land after the response already completed (so no AbortError);
+    // bail out rather than play the move.
+    if (!state.running) throw new StopError();
+
+    updateTokensAfterCall(p, res.usage, msgs);
+    // The panel is normally filled from the same reasoning text via onDelta;
+    // only if nothing was displayed is the final reasoning shown here.
+    if (res.reasoning && !(reasonBody && reasonBody.textContent.trim())) ensureBody().textContent = String(res.reasoning);
+
+    const truncated = res.finishReason === "length";
+    if (res.toolCalls.length && !truncated){
+      const am = { role: "assistant", content: res.text || null };
+      if (res.reasoning && res.reasoningField) am[res.reasoningField] = res.reasoning;
+      am.tool_calls = res.toolCalls.map(tc => ({
+        id: tc.id || `call_${p}_${++callSeq}`,
+        type: "function",
+        function: { name: tc.name, arguments: tc.arguments },
+      }));
+      msgs.push(am);
+      // Text alongside tool calls does not count as an answer, but is shown
+      // so it is visible what the model wrote.
+      if (res.text && res.text.trim()) put(reasoningSection("text with tool calls (not used as the answer)", res.text, false));
+      for (const tc of am.tool_calls){
+        let body, summary;
+        if (callsLeft > 0){
+          callsLeft--;
+          const r = runPlayOut(g, tc.function.name, tc.function.arguments);
+          body = r.text; summary = r.summary;
+        } else {
+          body = "Error: the call was not run.";
+          summary = "not run";
+        }
+        const content = body + "\n" + budgetLine(callsLeft);
+        msgs.push({ role: "tool", tool_call_id: tc.id, content });
+        const label = tc.function.name === "play_out" ? `play_out ${summary}` : summary;
+        put(toolCallLine(`${label} · ${budgetLine(callsLeft)}`, content));
+      }
+      autoScrollStream(p);
+      if (offered) continue;
+      // The tool was not offered but the model called one anyway: the error
+      // results above tell it so, and the attempt counts as failed so a model
+      // that keeps calling cannot loop forever.
+      put(mk("div", "note", `Called a tool when none was available (attempt ${attempt}/${MAX_RETRIES}) — re-prompting…`));
+      attempt++;
+      continue;
+    }
+
+    // Final answer, or a cut-off generation. A cut-off generation that
+    // contained tool calls is a failed attempt (its calls are dropped); a
+    // cut-off reply without tool calls that still parses as a legal move is
+    // played.
+    const parsed = truncated && res.toolCalls.length ? null : parseReply(res.text);
+    const moveInt = parsed ? parsed.move : null;
+    let col = null;
+    if (moveInt !== null && legalCols.includes(moveInt - 1)) col = moveInt - 1;
+
+    if (col !== null){
+      if (parsed.commentary) put(mk("div", "commentary", parsed.commentary));
+      moveEl.textContent = "→ column " + (col + 1);
+      autoScrollStream(p);
+      return { col, commentary: parsed.commentary };
+    }
+
+    // A reply cut off by max_tokens is reported as such, not as a bad answer.
+    // A parseable reply that fails here named a full column.
+    let why, retry;
+    if (truncated){
+      state.stats[p].truncated++;
+      why = `Hit max tokens (${cfg.maxTokens}) before answering`;
+      retry = `Your response was cut off before it gave a move. Legal columns right now are: ${legalHuman.join(", ")}. End your reply with a final line that is exactly one column number.`;
+    } else if (moveInt !== null){
+      why = `Column ${moveInt} is full`;
+      retry = `Column ${moveInt} is full. Legal columns right now are: ${legalHuman.join(", ")}. End your reply with a final line that is exactly one column number.`;
+    } else {
+      why = "Last line was not a single column number";
+      retry = `The last line of your reply must be exactly one column number. Legal columns right now are: ${legalHuman.join(", ")}. End your reply with a final line that is exactly one column number.`;
+    }
+    updateTokenDisplay(p);
+    put(mk("div", "note", `${why} (attempt ${attempt}/${MAX_RETRIES}) — re-prompting…`));
+    // The rejected reply exactly as received, for diagnosing format failures.
+    put(reasoningSection("rejected reply", res.text || "(empty)", false));
+    const am = { role: "assistant", content: res.text || "(no content)" };
+    if (res.reasoning && res.reasoningField) am[res.reasoningField] = res.reasoning;
+    msgs.push(am);
+    msgs.push({ role: "user", content: retry });
+    attempt++;
+  }
+
+  state.stats[p].fallbacks++;
+  updateTokenDisplay(p);
+  const fallback = legalCols[Math.floor(Math.random() * legalCols.length)];
+  put(mk("div", "note", `No valid move after ${MAX_RETRIES} attempts — playing random column ${fallback + 1}.`));
+  moveEl.textContent = "→ column " + (fallback + 1) + " (fallback)";
+  autoScrollStream(p);
+  return { col: fallback };
+}
+
+/* ============================================================
+   Notes update (after each game)
+   ============================================================ */
+// One call per player after a game, with no retries. The reply replaces the
+// player's notes. A reply cut off by max_tokens, or an empty one, keeps the
+// previous notes, since a partial rewrite could silently drop what the model
+// meant to keep. The 300-word limit is only an instruction; staying within it
+// is part of what is being evaluated, so the reply is never trimmed.
+async function updateNotes(p){
+  const cfg = configs[p];
+  const n = state.records.length;
+  const { entry, reasonBody, moveEl } = startTurnEntry(p);
+
+  const content = [
+    `Game ${n} is over.`,
+    recordLine(p, state.records[n - 1], n),
+    "",
+    tableTalk(p, state.records[n - 1]),
+    "",
+    "Your current notes:",
+    notesText(p),
+    "",
+    "Rewrite your notes for future games in this series: what you learned about this opponent and about your own play. Keep them under 300 words. Reply with only the notes.",
+  ].join("\n");
+  const msgs = [
+    { role: "system", content: rulesPrompt(p, cfg) },
+    { role: "user", content },
+  ];
+
+  const res = await chat(cfg, msgs, (type, chunk) => {
+    if (type === "reasoning"){
+      reasonBody.textContent += chunk;
+      if (reasonBody.textContent.length > 20000) reasonBody.textContent = reasonBody.textContent.slice(-20000);
+      autoScrollStream(p);
+    }
+  });
+  if (!state.running) throw new StopError();
+  updateTokensAfterCall(p, res.usage, msgs);
+
+  if (!reasonBody.textContent.trim() && res.reasoning) reasonBody.textContent = String(res.reasoning);
+
+  const notes = (res.text || "").trim();
+  if (res.finishReason === "length" || !notes){
+    const why = res.finishReason === "length" ? `hit max tokens (${cfg.maxTokens})` : "empty reply";
+    moveEl.textContent = "Notes unchanged";
+    appendNote(entry, `Notes update failed (${why}); keeping previous notes.`);
+  } else {
+    state.notes[p] = notes;
+    moveEl.textContent = "Notes updated";
+    const details = document.createElement("details");
+    details.className = "reasoning";
+    details.open = true;
+    const summary = document.createElement("summary");
+    summary.textContent = "notes";
+    details.appendChild(summary);
+    details.appendChild(mk("div", "reasoning-body", notes));
+    entry.appendChild(details);
+  }
+  autoScrollStream(p);
+}
+
+/* ============================================================
+   One full game
+   ============================================================ */
+async function playOneGame(){
+  state.gameNum++;
+  const g = new Game();
+  state.game = g;
+  // First move alternates: Red opens odd-numbered games, Yellow even ones.
+  // gameNum restarts at 0 each series, so every series opens with Red.
+  g.turn = (state.gameNum % 2 === 1) ? RED : YELLOW;
+
+  state.phase = "in-game";
+  updateControls();
+
+  renderBoard();
+
+  const firstColor = g.turn === RED ? "Red" : "Yellow";
+  const startMsg = `— Game ${state.gameNum} begins · ${firstColor} first —`;
+  appendEvent(1, startMsg);
+  appendEvent(2, startMsg);
+  setStatus(`Game ${state.gameNum} starting…`);
+
+  while (!g.over){
+    if (!state.running) return;
+    const p = g.turn;
+    const colorName = p === 1 ? "Red" : "Yellow";
+
+    setStatus(`Game ${state.gameNum} · move ${g.moves.length + 1} — ${configs[p].name} (${colorName}) thinking…`);
+    const result = await getMove(p, g);
+    if (!state.running) return;
+
+    const c = result.col;
+    const r = g.drop(c, p);
+    // Table talk for this move; empty for fallback moves.
+    g.moves[g.moves.length - 1].say = result.commentary || "";
+    const winCells = g.checkWinFrom(c, r, p);
+
+    if (winCells){ g.over = true; g.winner = p; g.winCells = winCells; }
+
+    renderBoard({ c, r });
+
+    if (winCells){
+      state.scores[p]++;
+      updateScoreboard();
+    } else if (g.moves.length >= ROWS * COLS){
+      // Board full without a win: draw (winner stays 0).
+      g.over = true;
+      state.scores.draws++;
+      updateScoreboard();
+    }
+
+    if (!g.over) g.turn = (p === RED) ? YELLOW : RED;
+  }
+
+  const resultText = g.winner === RED
+    ? `${configs[1].name} (Red) wins game ${state.gameNum}`
+    : g.winner === YELLOW
+      ? `${configs[2].name} (Yellow) wins game ${state.gameNum}`
+      : `Game ${state.gameNum} ends in a draw`;
+  const resultKind = g.winner === 0 ? "draw" : "win";
+  appendEvent(1, resultText, resultKind);
+  appendEvent(2, resultText, resultKind);
+  setStatus(resultText);
+
+  // Record the game, then let each player rewrite its notes. The phase stays
+  // "in-game" until both are done so Reset context cannot clear records or
+  // notes while an update is in flight.
+  state.records.push(g);
+  for (const p of [1, 2]){
+    setStatus(`${resultText} · ${configs[p].name} updating notes…`);
+    await updateNotes(p);
+    if (!state.running) return;
+  }
+
+  state.phase = "between-games";
+  updateControls();
+  setStatus(resultText);
+
+  await sleep(1000);
+  if (!state.running) return;
+
+  let secs = Math.max(0, Math.min(120, parseInt(gameDelayEl.value, 10) || 0));
+  if (secs > 0){
+    const msg = `Next game in ${secs} s`;
+    appendEvent(1, msg, "countdown");
+    appendEvent(2, msg, "countdown");
+    await runCountdown(secs);
+  } else {
+    setStatus("Next game starting…");
+    await sleep(200);
+  }
+}
+
+async function runCountdown(totalSeconds){
+  const end = Date.now() + totalSeconds * 1000;
+  while (state.running){
+    const remaining = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+    setStatus(`Next game in ${remaining} s…`);
+    if (remaining <= 0) return;
+    await sleep(200);
+  }
+}
+
+/* ============================================================
+   Series loop
+   ============================================================ */
+async function startSeries(){
+  if (state.running) return;
+
+  configs[1] = readConfig(1);
+  configs[2] = readConfig(2);
+  state.toolLimit = Math.max(0, parseInt(toolLimitEl.value, 10) || 0);
+  for (const p of [1, 2]){
+    const c = configs[p];
+    if (!c.endpoint || !c.model){
+      alert(`Please set the endpoint and model for Player ${p} (${p === 1 ? "Red" : "Yellow"}).`);
+      return;
+    }
+  }
+  refreshPlayerLabels();
+
+  state.running = true;
+  state.gameNum = 0;
+  state.phase = "idle";
+  updateScoreboard();
+  updateControls();
+
+  appendEvent(1, `Series started — ${configs[1].name} vs ${configs[2].name}.`);
+  appendEvent(2, `Series started — ${configs[1].name} vs ${configs[2].name}.`);
+
+  try {
+    while (state.running){
+      await playOneGame();
+      if (!state.running) break;
+    }
+  } catch (err){
+    // Any error ends the whole series. Errors caused by Stop (the aborted
+    // fetch, StopError, or anything thrown once running is false) are expected
+    // and not reported; everything else is shown in both logs and the status bar.
+    const benign = err && (err.name === "AbortError" || err.name === "StopError" || !state.running);
+    if (!benign){
+      console.error(err);
+      appendEvent(1, "Error: " + (err.message || String(err)), "note");
+      appendEvent(2, "Error: " + (err.message || String(err)), "note");
+      setStatus("Error: " + (err.message || String(err)));
+    }
+  } finally {
+    state.running = false;
+    state.abort = null;
+    state.phase = "idle";
+    updateControls();
+    if (!statusEl.textContent.startsWith("Error")) setStatus("Stopped.");
+  }
+}
+
+function stopSeries(){
+  if (!state.running) return;
+  state.running = false;
+  if (state.abort){ try { state.abort.abort(); } catch (e) {} }
+  setStatus("Stopping…");
+  updateControls();
+}
+
+/* ============================================================
+   UI updates
+   ============================================================ */
+function updateScoreboard(){
+  score1El.textContent = state.scores[1];
+  score2El.textContent = state.scores[2];
+  scoreDEl.textContent = state.scores.draws;
+  name1El.textContent = configs[1].name;
+  name2El.textContent = configs[2].name;
+}
+
+function updateControls(){
+  startBtn.disabled = state.running;
+  stopBtn.disabled = !state.running;
+  startBtn.textContent = state.running ? "▶ Running…" : "▶ Start series";
+  resetContextBtn.disabled = state.phase === "in-game";
+}
+
+function resetContexts(){
+  if (state.phase === "in-game") return;
+  state.records = [];
+  state.notes = { 1: "", 2: "" };
+  state.tokens[1] = { value: 0, estimated: false };
+  state.tokens[2] = { value: 0, estimated: false };
+  updateTokenDisplay(1);
+  updateTokenDisplay(2);
+  const note = "Context reset — game records and both agents' notes cleared.";
+  appendEvent(1, note, "note");
+  appendEvent(2, note, "note");
+}
+
+/* ============================================================
+   Wiring
+   ============================================================ */
+startBtn.addEventListener("click", () => startSeries());
+stopBtn.addEventListener("click", () => stopSeries());
+resetContextBtn.addEventListener("click", () => resetContexts());
+
+resetScoresBtn.addEventListener("click", () => {
+  if (state.running && !confirm("Reset the scoreboard mid-series?")) return;
+  state.scores = { 1: 0, 2: 0, draws: 0 };
+  state.stats = { 1: { truncated: 0, fallbacks: 0 }, 2: { truncated: 0, fallbacks: 0 } };
+  updateScoreboard();
+  updateTokenDisplay(1);
+  updateTokenDisplay(2);
+});
+
+clearLogBtn.addEventListener("click", () => {
+  document.getElementById("stream1").innerHTML = "";
+  document.getElementById("stream2").innerHTML = "";
+  state.firstAppend[1] = true;
+  state.firstAppend[2] = true;
+  state.autoFollow[1] = true;
+  state.autoFollow[2] = true;
+});
+
+window.addEventListener("beforeunload", (e) => {
+  if (state.running){ e.preventDefault(); e.returnValue = ""; }
+});
+
+/* ============================================================
+   Boot
+   ============================================================ */
+loadSettings();
+refreshPlayerLabels();
+renderBoard();
+requestAnimationFrame(layoutBoard);
+updateScoreboard();
+updateTokenDisplay(1);
+updateTokenDisplay(2);
+updateControls();
+setStatus("Ready. Configure the two endpoints and press Start.");
+
+if (location.protocol === "file:"){
+  setStatus("This page must be served by serve.py — open http://localhost:8000/ instead of the file directly.");
+}
+})();
+</script>
+</body>
+</html>
