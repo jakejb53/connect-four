@@ -390,6 +390,34 @@ class Game {
     }
     return out.length ? out.join(" ") : "(none)";
   }
+
+  // Every row, and every diagonal of four or more cells, as a sequence of
+  // (column,row) cells: R, Y, "+" (empty and playable now: directly above the
+  // top piece of its column) or "." (empty, not yet playable). This is the
+  // grouping into lines a human sees at a glance; it names no threats.
+  toLines(){
+    const cell = (c, r) => {
+      const v = this.at(c, r);
+      const mark = v === RED ? "R" : v === YELLOW ? "Y" : (r === this.height(c) ? "+" : ".");
+      return `(${c + 1},${r + 1})${mark}`;
+    };
+    const run = (c, r, dc, dr) => {
+      const out = [];
+      for (; c >= 0 && c < COLS && r >= 0 && r < ROWS; c += dc, r += dr) out.push(cell(c, r));
+      return out.join(" ");
+    };
+    const L = [];
+    L.push("  Rows:");
+    for (let r = 0; r < ROWS; r++) L.push(`    row ${r + 1}: ` + run(0, r, 1, 0));
+    // Diagonal starts on the left and bottom edges whose runs reach 4 cells.
+    L.push("  Diagonals ↗ (up-right):");
+    for (let r = ROWS - 4; r >= 1; r--) L.push("    " + run(0, r, 1, 1));
+    for (let c = 0; c <= COLS - 4; c++) L.push("    " + run(c, 0, 1, 1));
+    L.push("  Diagonals ↘ (down-right):");
+    for (let r = 3; r < ROWS - 1; r++) L.push("    " + run(0, r, 1, -1));
+    for (let c = 0; c <= COLS - 4; c++) L.push("    " + run(c, ROWS - 1, 1, -1));
+    return L.join("\n");
+  }
 }
 
 /* ============================================================
@@ -964,6 +992,9 @@ function positionText(g, boardLabel){
   L.push("Pieces as (column,row):");
   L.push("  Red:    " + g.toPieceList(RED));
   L.push("  Yellow: " + g.toPieceList(YELLOW));
+  L.push("");
+  L.push('Lines (cells in order; "+" = empty and playable now, "." = empty, not yet playable):');
+  L.push(g.toLines());
   L.push("");
   L.push(`${boardLabel}. Y=Yellow. R=Red.`);
   L.push(g.toText());

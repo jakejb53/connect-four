@@ -3,8 +3,6 @@
 ## Perception
 Information a human player sees at a glance.
 
-- **Line view:** every row and every diagonal of four or more cells shown as a sequence of cells, with empty squares marked as playable now or not yet playable. A human sees lines as lines; a language model reads sequences natively, so the same grouping becomes reading a string. Approved in direction; not yet implemented.
-- **Line view in `play_out` results:** the same view after hypothetical moves, so imagining a move shows its lines as a human's visual imagination would.
 - **Change since your last turn:** the two pieces placed since the player last moved (its own and the opponent's reply). A human sees what changed without comparing boards.
 - **Newest piece marked on the grid:** the last piece played is shown distinctly in the grid itself, as a human watched it drop.
 - **Groups of adjacent pieces:** each player's pieces that touch in a row, column, or diagonal, listed as groups. A human sees clusters as shapes. Borderline: grouping adjacency is perception, but naming what a group threatens is not, and only the former would be provided.

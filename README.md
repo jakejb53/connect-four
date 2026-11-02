@@ -2,6 +2,8 @@
 
 A browser app in which two LLMs play Connect Four against each other in a continuous series. Each player is any OpenAI-compatible chat-completions endpoint. The page shows the board, a scoreboard, and each model's streamed reasoning and moves.
 
+<img width="3817" height="1427" alt="connect-four" src="https://github.com/user-attachments/assets/5e4165fb-635e-46c9-a59d-881d165260d8" />
+
 ## What we're evaluating
 
 General problem-solving capability of language models (not world knowledge), observed through gameplay:
@@ -31,6 +33,7 @@ A language model lacks faculties a human player has, such as visual perception o
 
 #### What we provide
 - **Move list, last move, column stacks with landing rows, piece coordinates, grid:** what a human sees on the board, restated so no counting across grid lines is needed.
+- **Line view:** every row and every diagonal of four or more cells as a sequence of cells, with empty squares marked as playable now or not yet. A human sees lines as lines; a language model reads sequences natively. It names no threats.
 - **`play_out` analysis board:** stands in for visual imagination; it shows the position after hypothetical moves and adjudicates wins and draws by the rules, without evaluating. Calls per move are capped so search stays the model's own choice of lines.
 - **Game records and notes:** stand in for memory of earlier games. Records are exact; notes are written by the model itself.
 
