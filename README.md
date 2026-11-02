@@ -68,7 +68,7 @@ Each move's reasoning, tool use, plans, messages, and commentary are shown. Mess
        python3 serve.py
 
 2. Open http://localhost:8000/connect-four.html (or the same path on `127.0.0.1:8000`). The page must be loaded from this server; opening the file directly will not work.
-3. For each player, set **Endpoint** (a base URL such as `http://10.0.0.5:1234/v1`, or the full `/chat/completions` URL) and **Model**. API key, reasoning effort, max tokens, and streaming are optional.
+3. For each player, set **Endpoint** (a base URL such as `https://inference.example.com/v1`, or the full `/chat/completions` URL) and **Model**. API key, reasoning effort, max tokens, and streaming are optional.
 4. Optionally set **Tool calls** (next to Countdown): the number of `play_out` calls each player may make per move. 0 turns `play_out` off; `save_plan`, `tell_opponent`, and `commentary` are always available.
 5. Press **Start series**.
 
