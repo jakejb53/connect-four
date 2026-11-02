@@ -10,6 +10,7 @@ General problem-solving capability of language models (not world knowledge), obs
 
 - **Tactics:** finding and executing concrete short-term sequences — wins, blocks, forcing moves.
 - **Strategy:** forming and pursuing longer-term plans and judging positions without forcing lines.
+- **Psychology:** taunting, distracting, and misdirecting the opponent through table talk, and seeing through the opponent's attempts.
 - **Learning and self-improvement:**
   - **About the game:** discovering principles not given to them.
   - **About their opponent:** recognizing and exploiting a specific opponent's tendencies.
@@ -38,6 +39,7 @@ A language model lacks faculties a human player has, such as visual perception o
 - **`play_out` analysis board:** stands in for visual imagination; it shows the position after hypothetical moves and adjudicates wins and draws by the rules, without evaluating. Calls per move are capped so search stays the model's own choice of lines.
 - **Game records and notes:** stand in for memory of earlier games. Records are exact; notes are written by the model itself.
 - **`save_plan` private plan:** stands in for remembering what you were planning between your own moves. The model writes it; only it sees it, on its next move in the same game.
+- **How table talk is played:** players are told that table talk may taunt, distract, or misdirect, need not be truthful, and that psychological advantage often decides games. Like the rules, this describes the game, not the position.
 
 #### What we don't provide
 - **Threats, immediate wins, required blocks, or unsafe moves:** conclusions about the position, not perception.
@@ -69,6 +71,8 @@ Each move's reasoning, tool use, plans, messages, and commentary are shown. Mess
 3. For each player, set **Endpoint** (a base URL such as `http://10.0.0.5:1234/v1`, or the full `/chat/completions` URL) and **Model**. API key, reasoning effort, max tokens, and streaming are optional.
 4. Optionally set **Tool calls** (next to Countdown): the number of `play_out` calls each player may make per move. 0 turns `play_out` off; `save_plan`, `tell_opponent`, and `commentary` are always available.
 5. Press **Start series**.
+
+Settings (including API keys) and the series state — game records, notes, scores, plans, and the game in progress — are saved in the browser's localStorage. On reload the saved state is restored, and **Start series** resumes it: an interrupted move restarts from its beginning. **Clear state** discards the series state (and clears the logs) but keeps settings. Storage is per origin, so `localhost:8000` and `127.0.0.1:8000` keep separate saves. If a save fails validation it is not loaded and is left untouched for repair from devtools; Start stays disabled until it loads or is cleared.
 
 `serve.py` serves the page and relays its API calls to the endpoints, so the endpoints don't need to allow browser (CORS) requests. It listens only on `127.0.0.1:8000`.
 

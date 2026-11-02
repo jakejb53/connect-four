@@ -250,8 +250,7 @@
         <button id="startBtn" class="primary">▶ Start series</button>
         <button id="stopBtn" disabled>■ Stop</button>
         <button id="resetScoresBtn">Reset scores</button>
-        <button id="resetContextBtn">Reset context</button>
-        <button id="clearLogBtn">Clear log</button>
+        <button id="clearStateBtn">Clear state</button>
         <label class="inline">Countdown <input id="gameDelay" type="number" value="10" min="0" max="120" step="1"> s</label>
         <label class="inline">Tool calls <input id="toolLimit" type="number" value="10" min="0" step="1"> / move</label>
       </div>
@@ -298,6 +297,9 @@ const ROWS = 6, COLS = 7;
 const RED = 1, YELLOW = 2;
 const MAX_RETRIES = 3;
 const LS_KEY = "c4-ai-v1";
+// Saved series state (see "State persistence"); separate from the settings
+// under LS_KEY so Clear state never touches settings.
+const STATE_KEY = "c4-ai-state";
 
 /* ============================================================
    Game engine
@@ -330,6 +332,18 @@ class Game {
   height(c){ return this.cols[c].length; }
   legal(){ const a = []; for (let c = 0; c < COLS; c++) if (this.cols[c].length < ROWS) a.push(c); return a; }
   drop(c, p){ const r = this.cols[c].length; this.cols[c].push(p); this.moves.push({c, r, p}); return r; }
+  // Plays column c for the side to move and applies the rules: a win or a
+  // full board ends the game, otherwise the turn passes. The single move rule
+  // shared by live play and replaying saved games. Returns the landing row.
+  play(c){
+    const p = this.turn;
+    const r = this.drop(c, p);
+    const win = this.checkWinFrom(c, r, p);
+    if (win){ this.over = true; this.winner = p; this.winCells = win; }
+    else if (this.moves.length >= ROWS * COLS) this.over = true;  // draw: winner stays 0
+    else this.turn = p === RED ? YELLOW : RED;
+    return r;
+  }
   // Checks only lines through the piece just placed at (c, r); any earlier
   // win would already have ended the game. Returns the connected cells (4+)
   // for highlighting, or null.
@@ -482,15 +496,16 @@ class Game {
    ============================================================ */
 const state = {
   running: false,
-  // "idle" | "in-game" | "between-games". "in-game" disables Reset context.
-  phase: "idle",
+  // The game on the board: in progress (not over), or the last finished game
+  // (over, and also the last entry of records). Start resumes the former and
+  // begins a new game after the latter. A game's number is always
+  // records.length + 1 while it is in progress.
   game: new Game(),
-  gameNum: 0,
   scores: { 1: 0, 2: 0, draws: 0 },
   // Per-player failure counts: attempts cut off by max_tokens, and turns that
   // fell back to a random move. Cleared together with the scores.
   stats: { 1: { truncated: 0, fallbacks: 0 }, 2: { truncated: 0, fallbacks: 0 } },
-  // What carries across games, until Reset context. Each turn starts a fresh
+  // What carries across games, until Clear state. Each turn starts a fresh
   // conversation built from these plus the current game; earlier turns are
   // not resent.
   // records: finished Game objects in play order, shared by both players and
@@ -499,21 +514,31 @@ const state = {
   //   every game.
   records: [],
   notes: { 1: "", 2: "" },
+  // Players whose notes update for the last finished game has not completed,
+  // in the order they run. Set when a game ends; Start runs any left over
+  // (after Stop or a reload) before the next game.
+  notesPending: [],
   // Each player's private plan, written with save_plan (each call replaces
   // it) and shown only to that player on its next move. Cleared when a game
   // starts; a move that saves nothing leaves the previous plan in place.
+  // Committed only when the move is played, so an interrupted move that is
+  // restarted sees the same plan it saw the first time.
   plans: { 1: "", 2: "" },
   // play_out calls allowed per move, read from the setting at series start
   // (like `configs`). 0 means the tool is not offered at all.
   toolLimit: 0,
   tokens: { 1: { value: 0, estimated: false }, 2: { value: 0, estimated: false } },
   // firstAppend: the next log entry should also scroll the whole side column
-  // to the bottom (set at load and after Clear log).
+  // to the bottom (set at load and after Clear state).
   // autoFollow: the log panel is near the bottom, so new output keeps it there.
   firstAppend: { 1: true, 2: true },
   autoFollow: { 1: true, 2: true },
   // AbortController of the in-flight chat request, used by Stop.
   abort: null,
+  // Message from a saved state that failed validation, or null. While set,
+  // nothing is saved and Start is disabled, so the stored copy stays intact
+  // for repair; Clear state is the way out.
+  loadError: null,
 };
 
 // Snapshot of the config cards taken at series start. Gameplay reads only
@@ -537,8 +562,7 @@ const statusEl = $("#status");
 const startBtn = $("#startBtn");
 const stopBtn = $("#stopBtn");
 const resetScoresBtn = $("#resetScoresBtn");
-const resetContextBtn = $("#resetContextBtn");
-const clearLogBtn = $("#clearLogBtn");
+const clearStateBtn = $("#clearStateBtn");
 const score1El = $("#score1");
 const score2El = $("#score2");
 const scoreDEl = $("#scoreD");
@@ -587,7 +611,7 @@ function buildConfigCard(p){
       <span class="tag">${colorName}</span>
     </div>
     <div class="field-row"><label>Endpoint</label><input class="p-endpoint" type="text" placeholder="http://10.0.0.5:1234/v1"></div>
-    <div class="field-row"><label>API key</label><input class="p-key" type="password" placeholder="sk-… (memory only)"></div>
+    <div class="field-row"><label>API key</label><input class="p-key" type="password" placeholder="sk-…"></div>
     <div class="field-row"><label>Model</label><input class="p-model" type="text" placeholder="gpt-4o-mini"></div>
     <div class="field-row"><label>Name</label><input class="p-name" type="text" value="${colorName}"></div>
     <div class="field-row"><label>Reasoning</label>
@@ -629,9 +653,9 @@ function saveSettings(){
     const out = { delay: gameDelayEl.value, toolLimit: toolLimitEl.value, players: {} };
     for (const p of [1, 2]){
       const c = readConfig(p);
-      // The API key is deliberately not persisted; it lives only in the input.
+      // The API key is saved too: this is the user's own browser.
       out.players[p] = {
-        endpoint: c.endpoint, model: c.model, name: c.name,
+        endpoint: c.endpoint, key: c.key, model: c.model, name: c.name,
         reasoning: c.reasoning, maxTokens: c.maxTokens, stream: c.stream,
       };
     }
@@ -657,6 +681,7 @@ function loadSettings(){
     if (!cfg) continue;
     const card = document.getElementById("card" + p);
     if (cfg.endpoint) card.querySelector(".p-endpoint").value = cfg.endpoint;
+    if (cfg.key)      card.querySelector(".p-key").value      = cfg.key;
     if (cfg.model)    card.querySelector(".p-model").value    = cfg.model;
     if (cfg.name)     card.querySelector(".p-name").value     = cfg.name;
     if (cfg.reasoning != null) card.querySelector(".p-reasoning").value = cfg.reasoning;
@@ -677,6 +702,202 @@ document.addEventListener("change", (e) => {
     refreshPlayerLabels();
   }
 });
+
+/* ============================================================
+   State persistence
+   ============================================================ */
+// The series state is saved under STATE_KEY so a reload (for example after
+// changing this file) resumes where play stopped. It is saved only at
+// boundaries — a game starting, each move played, each notes update, Reset
+// scores — so the stored copy never holds part of a move. The log, token
+// counts and calls() trace are not saved.
+//
+// Format:
+//   { records: [game], game: game | null, notes: {1, 2}, notesPending: [p],
+//     plans: {1, 2}, scores: {1, 2, draws},
+//     stats: {1: {truncated, fallbacks}, 2: {truncated, fallbacks}} }
+//   game = { first: 1 | 2, moves: [{ c, say }] }, c 0-based.
+// A game is stored as who moved first and its moves; board, result and
+// winning cells are rebuilt by replaying it. `game` is the game in progress,
+// or null once the last game has finished (it is then the last record).
+//
+// Saves from earlier versions lack fields added since, so a missing field at
+// any depth takes its default. Only a game's `first` and `moves` and a move's
+// `c` have no default. A field that is present but invalid stops the whole
+// load (see loadState); a format change must therefore keep reading the old
+// format.
+
+// A new, empty game numbered n: Red opens odd-numbered games, Yellow even ones.
+function newGame(n){
+  const g = new Game();
+  g.turn = n % 2 === 1 ? RED : YELLOW;
+  return g;
+}
+
+function gameData(g){
+  return {
+    first: g.moves.length ? g.moves[0].p : g.turn,
+    moves: g.moves.map(m => ({ c: m.c, say: m.say || "" })),
+  };
+}
+
+// A failed save (e.g. storage quota) throws: during a series it ends the
+// series with the error shown, rather than continuing unsaved.
+function saveState(){
+  if (state.loadError) return;
+  localStorage.setItem(STATE_KEY, JSON.stringify({
+    records: state.records.map(gameData),
+    game: state.game.over ? null : gameData(state.game),
+    notes: state.notes,
+    notesPending: state.notesPending,
+    plans: state.plans,
+    scores: state.scores,
+    stats: state.stats,
+  }));
+}
+
+class StateError extends Error {}
+const isObj = v => v !== null && typeof v === "object" && !Array.isArray(v);
+const invalid = (path, why) => new StateError(`${path} ${why}`);
+
+// Readers for stored values: each takes the value (undefined when missing)
+// and its path for error messages, and returns the default when missing, the
+// value when valid, or throws a StateError.
+function readString(v, path){
+  if (v === undefined) return "";
+  if (typeof v !== "string") throw invalid(path, "is not a string");
+  return v;
+}
+function readCount(v, path){
+  if (v === undefined) return 0;
+  if (!Number.isInteger(v) || v < 0) throw invalid(path, "is not a non-negative integer");
+  return v;
+}
+function readObject(v, path){
+  if (v === undefined) return {};
+  if (!isObj(v)) throw invalid(path, "is not an object");
+  return v;
+}
+function readPlayers(v, path, read){
+  const o = readObject(v, path);
+  return { 1: read(o[1], `${path}.1`), 2: read(o[2], `${path}.2`) };
+}
+
+// Rebuilds a stored game by replaying its moves with Game.play, so every
+// derived field follows from the moves and an illegal sequence is rejected.
+function readGame(v, path){
+  if (!isObj(v)) throw invalid(path, "is not an object");
+  if (v.first !== RED && v.first !== YELLOW) throw invalid(`${path}.first`, "is not 1 or 2");
+  if (!Array.isArray(v.moves)) throw invalid(`${path}.moves`, "is not an array");
+  const g = new Game();
+  g.turn = v.first;
+  v.moves.forEach((m, i) => {
+    const mp = `${path}.moves[${i}]`;
+    if (g.over) throw invalid(mp, "comes after the game ended");
+    if (!isObj(m)) throw invalid(mp, "is not an object");
+    if (!Number.isInteger(m.c) || m.c < 0 || m.c >= COLS) throw invalid(`${mp}.c`, `is not a column index 0-${COLS - 1}`);
+    if (g.height(m.c) >= ROWS) throw invalid(mp, `plays into full column index ${m.c}`);
+    const say = readString(m.say, `${mp}.say`);
+    g.play(m.c);
+    g.moves[g.moves.length - 1].say = say;
+  });
+  return g;
+}
+
+// Validates stored data (format above) and returns the values applyState
+// takes. readState({}) is the empty state.
+function readState(data){
+  if (!isObj(data)) throw invalid("the saved state", "is not an object");
+  if (data.records !== undefined && !Array.isArray(data.records)) throw invalid("records", "is not an array");
+  const records = (data.records || []).map((r, i) => {
+    const g = readGame(r, `records[${i}]`);
+    if (!g.over) throw invalid(`records[${i}]`, "is not a finished game");
+    return g;
+  });
+  let game = null;
+  if (data.game != null){
+    game = readGame(data.game, "game");
+    if (game.over) throw invalid("game", "is finished but is not in records");
+  }
+  const np = data.notesPending === undefined ? [] : data.notesPending;
+  if (!Array.isArray(np) || !np.every(p => p === RED || p === YELLOW) || new Set(np).size !== np.length){
+    throw invalid("notesPending", "is not a list of distinct players 1 and 2");
+  }
+  if (np.length && !records.length) throw invalid("notesPending", "is set but no game has finished");
+  if (np.length && game) throw invalid("notesPending", "is set while a game is in progress");
+  const scores = readObject(data.scores, "scores");
+  return {
+    records, game, notesPending: np.slice(),
+    notes: readPlayers(data.notes, "notes", readString),
+    plans: readPlayers(data.plans, "plans", readString),
+    scores: { 1: readCount(scores[1], "scores.1"), 2: readCount(scores[2], "scores.2"),
+              draws: readCount(scores.draws, "scores.draws") },
+    stats: readPlayers(data.stats, "stats", (v, path) => {
+      const o = readObject(v, path);
+      return { truncated: readCount(o.truncated, `${path}.truncated`),
+               fallbacks: readCount(o.fallbacks, `${path}.fallbacks`) };
+    }),
+  };
+}
+
+// The board shows the game in progress, else the last finished game, else a
+// new game 1.
+function applyState(s){
+  state.records = s.records;
+  state.notes = s.notes;
+  state.notesPending = s.notesPending;
+  state.plans = s.plans;
+  state.scores = s.scores;
+  state.stats = s.stats;
+  const n = s.records.length;
+  state.game = s.game || (n ? s.records[n - 1] : newGame(1));
+}
+
+// Loads the saved state at boot. Returns a one-line description of what was
+// restored, or null when nothing was. A save that fails to parse or validate
+// is not loaded at all: state.loadError is set, which stops saving and
+// disables Start, and the stored copy is left untouched for repair from
+// devtools.
+function loadState(){
+  const raw = localStorage.getItem(STATE_KEY);
+  if (raw === null) return null;
+  let s;
+  try { s = readState(JSON.parse(raw)); }
+  catch (e){
+    if (!(e instanceof StateError || e instanceof SyntaxError)) throw e;
+    const why = e instanceof SyntaxError ? "it is not valid JSON" : e.message;
+    state.loadError = `Saved state not loaded: ${why}. It is kept unchanged in localStorage["${STATE_KEY}"]; fix it from devtools and reload, or press Clear state.`;
+    console.error(state.loadError);
+    return null;
+  }
+  applyState(s);
+  const n = state.records.length, g = state.game;
+  if (!g.over) return `Restored: game ${n + 1} at move ${g.moves.length + 1}.`;
+  if (state.notesPending.length) return `Restored: game ${n} finished, notes updates pending.`;
+  return `Restored: ${n} game${n === 1 ? "" : "s"} played.`;
+}
+
+// Back to the empty state, stored copy included. Settings are untouched.
+function clearState(){
+  if (state.running) return;
+  localStorage.removeItem(STATE_KEY);
+  state.loadError = null;
+  applyState(readState({}));
+  state.tokens[1] = { value: 0, estimated: false };
+  state.tokens[2] = { value: 0, estimated: false };
+  trace.game = 0;
+  trace.calls = [];
+  for (const p of [1, 2]){
+    document.getElementById("stream" + p).innerHTML = "";
+    state.firstAppend[p] = true;
+    state.autoFollow[p] = true;
+    updateTokenDisplay(p);
+  }
+  renderBoard();
+  updateScoreboard();
+  updateControls();
+  setStatus("State cleared.");
+}
 
 /* ============================================================
    Board rendering
@@ -972,7 +1193,7 @@ function movePrompt(p, cfg){
 
 Tools:${playOut}
 - save_plan: before you answer, use it to record anything you want to remember on your next move — your strategy, what you have worked out, what to check. Each call replaces your previous plan.
-- tell_opponent: use it to say something to your opponent. Anything you send becomes part of this game's table talk, which you both see on every move.
+- tell_opponent: use it to talk to your opponent: taunt them, distract them, misdirect them about your plans, or answer what they said. Victory is often decided by which side has the psychological advantage. Table talk need not be truthful, and your opponent's may not be either. Anything you send becomes part of this game's table talk, which you both see on every move.
 - commentary: use it to explain your thinking to the people watching the game.
 
 You may call save_plan, tell_opponent, and commentary as often as you like; all are optional.
@@ -1171,9 +1392,10 @@ function textArg(args, key){
   } catch (e) { return null; }
 }
 
-// Validates and applies one save_plan call for player p. Returns
-// { text, summary } like runPlayOut.
-function runSavePlan(p, args){
+// Validates one save_plan call. Returns { text, summary } like runPlayOut,
+// plus `plan` when valid. The plan is not stored here: getMove returns the
+// move's last plan and playOneGame commits it with the move (see state.plans).
+function runSavePlan(args){
   let parsed;
   try { parsed = JSON.parse(args || "{}"); } catch (e) {
     return { text: "Error: arguments are not valid JSON. The plan was not saved.", summary: "invalid JSON arguments" };
@@ -1181,8 +1403,7 @@ function runSavePlan(p, args){
   if (!parsed || typeof parsed.plan !== "string"){
     return { text: "Error: plan must be a string. The plan was not saved.", summary: "invalid plan" };
   }
-  state.plans[p] = parsed.plan.trim();
-  return { text: "Plan saved.", summary: "saved" };
+  return { text: "Plan saved.", summary: "saved", plan: parsed.plan.trim() };
 }
 
 // Validates and runs one play_out call against game `g`. Returns
@@ -1517,6 +1738,8 @@ async function getMove(p, g){
   let generation = 0;
   // tell_opponent messages sent this turn, in order; becomes the move's `say`.
   const messages = [];
+  // The last plan saved this turn, or null if none; committed with the move.
+  let plan = null;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; ){
     // One reasoning section per generation; the first was made by startTurnEntry.
@@ -1572,14 +1795,15 @@ async function getMove(p, g){
       for (const tc of am.tool_calls){
         let body, summary, label;
         if (tc.function.name === "save_plan"){
-          const r = runSavePlan(p, tc.function.arguments);
+          const r = runSavePlan(tc.function.arguments);
           body = r.text; summary = r.summary;
+          if (r.plan != null) plan = r.plan;
           label = `save_plan ${summary}`;
           // Shown inline, not collapsed: the plan is the model's own account
           // of its strategy and is meant to be read as the game goes.
           const planEl = mk("div", "plan");
           planEl.appendChild(mk("div", "plan-label", label));
-          if (summary === "saved") planEl.appendChild(mk("div", "plan-body", state.plans[p] || "(empty)"));
+          if (r.plan != null) planEl.appendChild(mk("div", "plan-body", r.plan || "(empty)"));
           put(planEl);
         } else if (tc.function.name === "tell_opponent" || tc.function.name === "commentary"){
           const key = tc.function.name === "tell_opponent" ? "message" : "text";
@@ -1653,7 +1877,7 @@ async function getMove(p, g){
       if (parsed.text) put(reasoningSection("reply text (not shared)", parsed.text, false));
       moveEl.textContent = "→ column " + (col + 1);
       autoScrollStream(p);
-      return { col, messages };
+      return { col, messages, plan };
     }
 
     // A reply cut off by max_tokens is reported as such, not as a bad answer.
@@ -1687,8 +1911,8 @@ async function getMove(p, g){
   put(mk("div", "note", `No valid move after ${MAX_RETRIES} attempts — playing random column ${fallback + 1}.`));
   moveEl.textContent = "→ column " + (fallback + 1) + " (fallback)";
   autoScrollStream(p);
-  // Messages sent during the turn were sent; they stand even on a fallback.
-  return { col: fallback, messages };
+  // Messages and the plan from the turn stand even on a fallback.
+  return { col: fallback, messages, plan };
 }
 
 /* ============================================================
@@ -1755,85 +1979,95 @@ async function updateNotes(p){
 /* ============================================================
    One full game
    ============================================================ */
-async function playOneGame(){
-  state.gameNum++;
-  const g = new Game();
-  state.game = g;
-  // Plans are per game; lessons across games belong in the notes.
-  state.plans = { 1: "", 2: "" };
-  // The inspection trace covers one game (plus the notes updates after it).
-  trace.game = state.gameNum;
-  trace.calls = [];
-  // First move alternates: Red opens odd-numbered games, Yellow even ones.
-  // gameNum restarts at 0 each series, so every series opens with Red.
-  g.turn = (state.gameNum % 2 === 1) ? RED : YELLOW;
+// The inspection trace covers one game plus the notes updates after it.
+function traceGame(n){
+  if (trace.game !== n){ trace.game = n; trace.calls = []; }
+}
 
-  state.phase = "in-game";
-  updateControls();
+function resultText(g, n){
+  return g.winner === RED ? `${configs[1].name} (Red) wins game ${n}`
+    : g.winner === YELLOW ? `${configs[2].name} (Yellow) wins game ${n}`
+    : `Game ${n} ends in a draw`;
+}
+
+// Runs the notes updates still owed for the last finished game, saving after
+// each, so a Stop or reload resumes with only the remaining ones. A failed
+// update (cut off or empty) still counts as done, as there are no retries.
+async function runPendingNotes(){
+  const n = state.records.length;
+  traceGame(n);
+  const text = resultText(state.records[n - 1], n);
+  while (state.notesPending.length){
+    const p = state.notesPending[0];
+    setStatus(`${text} · ${configs[p].name} updating notes…`);
+    // Throws StopError on Stop, leaving p pending; a normal return means the
+    // update completed.
+    await updateNotes(p);
+    state.notesPending.shift();
+    saveState();
+  }
+  setStatus(text);
+}
+
+// Plays the game on the board if it is in progress, resuming at its next
+// move, otherwise a new game. Then records it, runs both notes updates, and
+// waits out the countdown.
+async function playOneGame(){
+  const n = state.records.length + 1;
+  let g = state.game;
+  const resumed = !g.over && g.moves.length > 0;
+  if (g.over){
+    g = state.game = newGame(n);
+    // Plans are per game; lessons across games belong in the notes.
+    state.plans = { 1: "", 2: "" };
+    saveState();
+  }
+  traceGame(n);
 
   renderBoard();
 
-  const firstColor = g.turn === RED ? "Red" : "Yellow";
-  const startMsg = `— Game ${state.gameNum} begins · ${firstColor} first —`;
+  const startMsg = resumed
+    ? `— Game ${n} resumes at move ${g.moves.length + 1} —`
+    : `— Game ${n} begins · ${g.turn === RED ? "Red" : "Yellow"} first —`;
   appendEvent(1, startMsg);
   appendEvent(2, startMsg);
-  setStatus(`Game ${state.gameNum} starting…`);
+  setStatus(`Game ${n} ${resumed ? "resuming" : "starting"}…`);
 
   while (!g.over){
     if (!state.running) return;
     const p = g.turn;
     const colorName = p === 1 ? "Red" : "Yellow";
 
-    setStatus(`Game ${state.gameNum} · move ${g.moves.length + 1} — ${configs[p].name} (${colorName}) thinking…`);
+    setStatus(`Game ${n} · move ${g.moves.length + 1} — ${configs[p].name} (${colorName}) thinking…`);
     const result = await getMove(p, g);
     if (!state.running) return;
 
     const c = result.col;
-    const r = g.drop(c, p);
+    const r = g.play(c);
     // Table talk for this move: its tell_opponent messages, one per line.
-    g.moves[g.moves.length - 1].say = (result.messages || []).join("\n");
-    const winCells = g.checkWinFrom(c, r, p);
-
-    if (winCells){ g.over = true; g.winner = p; g.winCells = winCells; }
+    g.moves[g.moves.length - 1].say = result.messages.join("\n");
+    if (result.plan !== null) state.plans[p] = result.plan;
+    if (g.over){
+      if (g.winner) state.scores[g.winner]++;
+      else state.scores.draws++;
+      // Recorded in the same save as the final move, so a stored game is
+      // never finished without being in records.
+      state.records.push(g);
+      state.notesPending = [1, 2];
+    }
+    saveState();
 
     renderBoard({ c, r });
-
-    if (winCells){
-      state.scores[p]++;
-      updateScoreboard();
-    } else if (g.moves.length >= ROWS * COLS){
-      // Board full without a win: draw (winner stays 0).
-      g.over = true;
-      state.scores.draws++;
-      updateScoreboard();
-    }
-
-    if (!g.over) g.turn = (p === RED) ? YELLOW : RED;
+    if (g.over) updateScoreboard();
   }
 
-  const resultText = g.winner === RED
-    ? `${configs[1].name} (Red) wins game ${state.gameNum}`
-    : g.winner === YELLOW
-      ? `${configs[2].name} (Yellow) wins game ${state.gameNum}`
-      : `Game ${state.gameNum} ends in a draw`;
+  const text = resultText(g, n);
   const resultKind = g.winner === 0 ? "draw" : "win";
-  appendEvent(1, resultText, resultKind);
-  appendEvent(2, resultText, resultKind);
-  setStatus(resultText);
+  appendEvent(1, text, resultKind);
+  appendEvent(2, text, resultKind);
+  setStatus(text);
 
-  // Record the game, then let each player rewrite its notes. The phase stays
-  // "in-game" until both are done so Reset context cannot clear records or
-  // notes while an update is in flight.
-  state.records.push(g);
-  for (const p of [1, 2]){
-    setStatus(`${resultText} · ${configs[p].name} updating notes…`);
-    await updateNotes(p);
-    if (!state.running) return;
-  }
-
-  state.phase = "between-games";
-  updateControls();
-  setStatus(resultText);
+  await runPendingNotes();
 
   await sleep(1000);
   if (!state.running) return;
@@ -1879,8 +2113,6 @@ async function startSeries(){
   refreshPlayerLabels();
 
   state.running = true;
-  state.gameNum = 0;
-  state.phase = "idle";
   updateScoreboard();
   updateControls();
 
@@ -1888,6 +2120,9 @@ async function startSeries(){
   appendEvent(2, `Series started — ${configs[1].name} vs ${configs[2].name}.`);
 
   try {
+    // Notes updates left over from a Stop or reload after a game ended run
+    // first; the next game then starts without a countdown.
+    if (state.notesPending.length) await runPendingNotes();
     while (state.running){
       await playOneGame();
       if (!state.running) break;
@@ -1906,7 +2141,6 @@ async function startSeries(){
   } finally {
     state.running = false;
     state.abort = null;
-    state.phase = "idle";
     updateControls();
     if (!statusEl.textContent.startsWith("Error")) setStatus("Stopped.");
   }
@@ -1932,23 +2166,12 @@ function updateScoreboard(){
 }
 
 function updateControls(){
-  startBtn.disabled = state.running;
   stopBtn.disabled = !state.running;
   startBtn.textContent = state.running ? "▶ Running…" : "▶ Start series";
-  resetContextBtn.disabled = state.phase === "in-game";
-}
-
-function resetContexts(){
-  if (state.phase === "in-game") return;
-  state.records = [];
-  state.notes = { 1: "", 2: "" };
-  state.tokens[1] = { value: 0, estimated: false };
-  state.tokens[2] = { value: 0, estimated: false };
-  updateTokenDisplay(1);
-  updateTokenDisplay(2);
-  const note = "Context reset — game records and both agents' notes cleared.";
-  appendEvent(1, note, "note");
-  appendEvent(2, note, "note");
+  // A failed load keeps Start off so nothing overwrites the stored copy.
+  startBtn.disabled = state.running || !!state.loadError;
+  // Clear state only between runs, never under an in-flight call.
+  clearStateBtn.disabled = state.running;
 }
 
 /* ============================================================
@@ -1956,24 +2179,16 @@ function resetContexts(){
    ============================================================ */
 startBtn.addEventListener("click", () => startSeries());
 stopBtn.addEventListener("click", () => stopSeries());
-resetContextBtn.addEventListener("click", () => resetContexts());
+clearStateBtn.addEventListener("click", () => clearState());
 
 resetScoresBtn.addEventListener("click", () => {
   if (state.running && !confirm("Reset the scoreboard mid-series?")) return;
   state.scores = { 1: 0, 2: 0, draws: 0 };
   state.stats = { 1: { truncated: 0, fallbacks: 0 }, 2: { truncated: 0, fallbacks: 0 } };
+  saveState();
   updateScoreboard();
   updateTokenDisplay(1);
   updateTokenDisplay(2);
-});
-
-clearLogBtn.addEventListener("click", () => {
-  document.getElementById("stream1").innerHTML = "";
-  document.getElementById("stream2").innerHTML = "";
-  state.firstAppend[1] = true;
-  state.firstAppend[2] = true;
-  state.autoFollow[1] = true;
-  state.autoFollow[2] = true;
 });
 
 window.addEventListener("beforeunload", (e) => {
@@ -1984,6 +2199,7 @@ window.addEventListener("beforeunload", (e) => {
    Boot
    ============================================================ */
 loadSettings();
+const restored = loadState();
 refreshPlayerLabels();
 renderBoard();
 requestAnimationFrame(layoutBoard);
@@ -1991,7 +2207,15 @@ updateScoreboard();
 updateTokenDisplay(1);
 updateTokenDisplay(2);
 updateControls();
-setStatus("Ready. Configure the two endpoints and press Start.");
+if (state.loadError){
+  setStatus(state.loadError);
+} else if (restored){
+  appendEvent(1, restored);
+  appendEvent(2, restored);
+  setStatus(restored + " Press Start to continue.");
+} else {
+  setStatus("Ready. Configure the two endpoints and press Start.");
+}
 
 if (location.protocol === "file:"){
   setStatus("This page must be served by serve.py — open http://localhost:8000/ instead of the file directly.");
