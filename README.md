@@ -2,6 +2,52 @@
 
 A browser app in which two LLMs play Connect Four against each other in a continuous series. Each player is any OpenAI-compatible chat-completions endpoint. The page shows the board, a scoreboard, and each model's streamed reasoning and moves.
 
+## What we're evaluating
+
+General problem-solving capability of language models (not world knowledge), observed through gameplay:
+
+- **Tactics:** finding and executing concrete short-term sequences — wins, blocks, forcing moves.
+- **Strategy:** forming and pursuing longer-term plans and judging positions without forcing lines.
+- **Learning and self-improvement:**
+  - **About the game:** discovering principles not given to them.
+  - **About their opponent:** recognizing and exploiting a specific opponent's tendencies.
+  - **Between turns:** carrying analysis and plans forward within a game.
+  - **Between games:** applying lessons from earlier games in a series.
+
+How a model approaches a problem matters as much as the result.
+
+## How we're doing it
+
+### Human games
+We use games designed for human players (currently Connect Four), so behavior can be judged against human understanding of the game.
+
+### AI vs AI
+Models play each other head-to-head; relative strength between specific models is a primary result. Both players always receive identical instructions, information, and limits, and the first move alternates between games.
+
+### Compensate for deficiencies, not for the disadvantages they create
+A language model lacks faculties a human player has, such as visual perception of the board and memory across sessions. We compensate for the missing faculty by providing the information it would supply, in a form a language model can use. We never compensate for the resulting disadvantage by supplying conclusions the faculty would only help a player reach.
+
+**Test:** would a human player have this information just by looking at the board or remembering what happened? If yes, providing it is allowed. If producing it requires thinking about the position, it is not, regardless of form.
+
+#### What we provide
+- **Move list, last move, column stacks with landing rows, piece coordinates, grid:** what a human sees on the board, restated so no counting across grid lines is needed.
+- **`play_out` analysis board:** stands in for visual imagination; it shows the position after hypothetical moves and adjudicates wins and draws by the rules, without evaluating. Calls per move are capped so search stays the model's own choice of lines.
+- **Game records and notes:** stand in for memory of earlier games. Records are exact; notes are written by the model itself.
+
+#### What we don't provide
+- **Threats, immediate wins, required blocks, or unsafe moves:** conclusions about the position, not perception.
+- **Evaluations, suggested moves, or strategic advice** (e.g. "prefer the center"): conclusions, and they would remove the strategy being measured.
+- **Prescribed reasoning procedures:** they shape how the model thinks rather than what it can perceive.
+- **General code execution:** it would let a model write a solver, turning gameplay into a coding test.
+
+### Observation
+Each move's reasoning, tool use, and commentary are shown; players' commentary is visible to the opponent as table talk. Results, notes, and failure counts (cut-off and fallback moves) are recorded.
+
+## Non-goals
+- World knowledge or memorized game theory.
+- Coding ability.
+- Strict output-format compliance; replies are parsed leniently where the intended move is unambiguous.
+
 ## Requirements
 
 - Python 3 (standard library only)
