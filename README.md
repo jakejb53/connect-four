@@ -2,7 +2,7 @@
 
 A browser app in which two LLMs play Connect Four against each other in a continuous series. Each player is any OpenAI-compatible chat-completions endpoint. The page shows the board, a scoreboard, and each model's streamed reasoning and moves.
 
-<img width="3817" height="1427" alt="connect-four" src="https://github.com/user-attachments/assets/5e4165fb-635e-46c9-a59d-881d165260d8" />
+<img width="3819" height="1427" alt="c4" src="https://github.com/user-attachments/assets/f0b8841c-3b1b-4579-a07d-9148980c144a" />
 
 ## What we're evaluating
 
@@ -33,9 +33,11 @@ A language model lacks faculties a human player has, such as visual perception o
 
 #### What we provide
 - **Move list, last move, column stacks with landing rows, piece coordinates, grid:** what a human sees on the board, restated so no counting across grid lines is needed.
-- **Line view:** every row and every diagonal of four or more cells as a sequence of cells, with empty squares marked as playable now or not yet. A human sees lines as lines; a language model reads sequences natively. It names no threats.
+- **Line view:** every row and every diagonal of four or more cells as a sequence of cells, with each empty square marked as playable now or with how many pieces its column needs first. A human sees lines as lines, and sees the empty squares beneath a square; a language model reads sequences natively. It names no threats, and who will fill a column is left to the model.
+- **Valid moves with their results:** for each legal move, the lines through its landing square with the piece already placed, and the square that becomes playable above it. A human pictures the piece in the square and sees the lines through it at once; the model would otherwise rebuild them for every move it considers. It names no threats and never says whether a move wins.
 - **`play_out` analysis board:** stands in for visual imagination; it shows the position after hypothetical moves and adjudicates wins and draws by the rules, without evaluating. Calls per move are capped so search stays the model's own choice of lines.
 - **Game records and notes:** stand in for memory of earlier games. Records are exact; notes are written by the model itself.
+- **`save_plan` private plan:** stands in for remembering what you were planning between your own moves. The model writes it; only it sees it, on its next move in the same game.
 
 #### What we don't provide
 - **Threats, immediate wins, required blocks, or unsafe moves:** conclusions about the position, not perception.
@@ -44,7 +46,7 @@ A language model lacks faculties a human player has, such as visual perception o
 - **General code execution:** it would let a model write a solver, turning gameplay into a coding test.
 
 ### Observation
-Each move's reasoning, tool use, and commentary are shown; players' commentary is visible to the opponent as table talk. Results, notes, and failure counts (cut-off and fallback moves) are recorded.
+Each move's reasoning, tool use, plans, messages, and commentary are shown. Messages sent with `tell_opponent` become table talk both players see; `commentary` is for spectators only and reaches neither player. Results, notes, and failure counts (cut-off and fallback moves) are recorded.
 
 ## Non-goals
 - World knowledge or memorized game theory.
@@ -65,6 +67,11 @@ Each move's reasoning, tool use, and commentary are shown; players' commentary i
 
 2. Open http://localhost:8000/connect-four.html (or the same path on `127.0.0.1:8000`). The page must be loaded from this server; opening the file directly will not work.
 3. For each player, set **Endpoint** (a base URL such as `http://10.0.0.5:1234/v1`, or the full `/chat/completions` URL) and **Model**. API key, reasoning effort, max tokens, and streaming are optional.
-4. Press **Start series**.
+4. Optionally set **Tool calls** (next to Countdown): the number of `play_out` calls each player may make per move. 0 turns `play_out` off; `save_plan`, `tell_opponent`, and `commentary` are always available.
+5. Press **Start series**.
 
 `serve.py` serves the page and relays its API calls to the endpoints, so the endpoints don't need to allow browser (CORS) requests. It listens only on `127.0.0.1:8000`.
+
+## Inspecting model calls
+
+In the browser's devtools console, `calls()` returns every model call of the current game — the exact request body sent (model, parameters, all messages, all tools) and the parsed response — in a readable JSON-like layout with multi-line strings shown as written. `calls(i)` returns a single call. The record resets when each game starts; the notes updates after a game remain until the next one begins.

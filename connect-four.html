@@ -163,7 +163,13 @@
     margin-top:5px;font-size:11px;color:#ffcf7a;font-style:italic;
   }
   .turn-entry .toolcall{margin-top:5px}
-  .turn-entry .commentary{margin-top:6px;font-size:12.5px;white-space:pre-wrap;word-break:break-word}
+  .turn-entry .plan.tell{border-left-color:#ffcf7a}
+  .turn-entry .plan.tell .plan-label{color:#ffcf7a}
+  .turn-entry .plan.commentary-tool{border-left-color:#8ff0a4}
+  .turn-entry .plan.commentary-tool .plan-label{color:#8ff0a4}
+  .turn-entry .plan{margin-top:6px;padding:6px 9px;background:var(--panel2);border-left:2px solid #9fd3ff;border-radius:4px}
+  .turn-entry .plan-label{font-size:11px;color:#9fd3ff;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .turn-entry .plan-body{margin-top:3px;font-size:12px;white-space:pre-wrap;word-break:break-word}
   .turn-entry .toolcall details.reasoning summary{
     color:#9fd3ff;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
   }
@@ -391,19 +397,25 @@ class Game {
     return out.length ? out.join(" ") : "(none)";
   }
 
+  // One cell as "(column,row)" plus R, Y, "+" (empty and playable now:
+  // directly above the top piece of its column) or a number: how many pieces
+  // must go into the column before the square is playable. The gap is what a
+  // human sees as empty squares below it; who will fill them is left to the
+  // model. Shared by the line and valid-move views.
+  cellText(c, r){
+    const v = this.at(c, r);
+    const gap = r - this.height(c);
+    const mark = v === RED ? "R" : v === YELLOW ? "Y" : (gap === 0 ? "+" : String(gap));
+    return `(${c + 1},${r + 1})${mark}`;
+  }
+
   // Every row, and every diagonal of four or more cells, as a sequence of
-  // (column,row) cells: R, Y, "+" (empty and playable now: directly above the
-  // top piece of its column) or "." (empty, not yet playable). This is the
-  // grouping into lines a human sees at a glance; it names no threats.
+  // cells (see cellText). This is the grouping into lines a human sees at a
+  // glance; it names no threats.
   toLines(){
-    const cell = (c, r) => {
-      const v = this.at(c, r);
-      const mark = v === RED ? "R" : v === YELLOW ? "Y" : (r === this.height(c) ? "+" : ".");
-      return `(${c + 1},${r + 1})${mark}`;
-    };
     const run = (c, r, dc, dr) => {
       const out = [];
-      for (; c >= 0 && c < COLS && r >= 0 && r < ROWS; c += dc, r += dr) out.push(cell(c, r));
+      for (; c >= 0 && c < COLS && r >= 0 && r < ROWS; c += dc, r += dr) out.push(this.cellText(c, r));
       return out.join(" ");
     };
     const L = [];
@@ -416,6 +428,51 @@ class Game {
     L.push("  Diagonals ↘ (down-right):");
     for (let r = 3; r < ROWS - 1; r++) L.push("    " + run(0, r, 1, -1));
     for (let c = 0; c <= COLS - 4; c++) L.push("    " + run(c, ROWS - 1, 1, -1));
+    return L.join("\n");
+  }
+
+  // Each valid move for player p and what it produces: the lines through the
+  // landing square with the piece already placed (gap counts above it updated
+  // accordingly) and the square that becomes playable above it. This is what
+  // a human sees by picturing the piece in the square; it names no threats
+  // and never says whether a move wins. `you` words it for the reader's own
+  // move ("you"), otherwise by color (play_out positions where the other side
+  // is to move). The column line runs from the bottom up to the placed piece
+  // (everything above is empty); diagonals shorter than four cells are
+  // omitted, as in toLines().
+  toMoves(p, you){
+    const who = p === RED ? "Red" : "Yellow";
+    const L = [], full = [];
+    for (let c = 0; c < COLS; c++){
+      if (this.height(c) >= ROWS){ full.push(c + 1); continue; }
+      const a = this.clone();
+      const r = a.drop(c, p);
+      const through = (dc, dr) => {
+        let cc = c, rr = r;
+        while (cc - dc >= 0 && cc - dc < COLS && rr - dr >= 0 && rr - dr < ROWS){ cc -= dc; rr -= dr; }
+        const out = [];
+        for (; cc >= 0 && cc < COLS && rr >= 0 && rr < ROWS; cc += dc, rr += dr) out.push(a.cellText(cc, rr));
+        return out;
+      };
+      const sq = `(${c + 1},${r + 1})`;
+      if (L.length) L.push("");
+      L.push(`Move: ${c + 1}`);
+      L.push(you ? `Result if you choose ${c + 1}: your piece lands at ${sq}.`
+                 : `Result if ${who} chooses ${c + 1}: ${who}'s piece lands at ${sq}.`);
+      L.push(`  row ${r + 1}: ` + through(1, 0).join(" "));
+      const col = [];
+      for (let rr = 0; rr <= r; rr++) col.push(a.cellText(c, rr));
+      L.push(`  col ${c + 1}: ` + col.join(" "));
+      for (const [label, dc, dr] of [["↗", 1, 1], ["↘", 1, -1]]){
+        const d = through(dc, dr);
+        if (d.length >= 4) L.push(`  ${label}: ` + d.join(" "));
+      }
+      L.push(r + 1 < ROWS ? `  Square now playable above it: (${c + 1},${r + 2})` : "  The column is now full.");
+    }
+    for (const c of full){
+      if (L.length) L.push("");
+      L.push(`Column ${c} is full and is not a valid move.`);
+    }
     return L.join("\n");
   }
 }
@@ -442,6 +499,10 @@ const state = {
   //   every game.
   records: [],
   notes: { 1: "", 2: "" },
+  // Each player's private plan, written with save_plan (each call replaces
+  // it) and shown only to that player on its next move. Cleared when a game
+  // starts; a move that saves nothing leaves the previous plan in place.
+  plans: { 1: "", 2: "" },
   // play_out calls allowed per move, read from the setting at series start
   // (like `configs`). 0 means the tool is not offered at all.
   toolLimit: 0,
@@ -899,18 +960,25 @@ Game play:
 - If the board fills with no winner, the game is a draw.`;
 }
 
-// System prompt for move calls: the rules, the play_out allowance when the
-// tool is offered, and the reply format (commentary shared with the opponent
-// as table talk, then a final line with the column; see parseReply).
+// System prompt for move calls: the rules, how to use each offered tool, and
+// the answer format. Tool descriptions (in the tool definitions) say what each
+// tool does and who sees its output; this prompt says how to use them. Every
+// offered tool must be covered here.
 function movePrompt(p, cfg){
-  const tool = state.toolLimit > 0 ? `
+  const playOut = state.toolLimit > 0
+    ? `\n- play_out: use it to look at a position you are considering instead of reconstructing it in your head; the result shows that position's lines and valid moves just as your turn message does. You may call it at most ${state.toolLimit} times per move; each result shows how many calls remain.`
+    : "";
+  return rulesPrompt(p, cfg) + `
 
-Analysis tool:
-You may call play_out at most ${state.toolLimit} times per move. It plays a sequence of columns from the current position on a separate analysis board and shows the result; it does not affect the real game. Each result tells you how many calls remain.` : "";
-  return rulesPrompt(p, cfg) + tool + `
+Tools:${playOut}
+- save_plan: before you answer, use it to record anything you want to remember on your next move — your strategy, what you have worked out, what to check. Each call replaces your previous plan.
+- tell_opponent: use it to say something to your opponent. Anything you send becomes part of this game's table talk, which you both see on every move.
+- commentary: use it to explain your thinking to the people watching the game.
 
-Output format:
-${tool ? "When you have decided, write" : "Write"} your commentary for this move, a few sentences at most. Your opponent will see it, and you will see theirs, so you may talk to each other. Then end your reply with a final line that is exactly one integer between 1 and 7: the column number for your move.`;
+You may call save_plan, tell_opponent, and commentary as often as you like; all are optional.
+
+Answer:
+When you have decided, reply with only the column number (1-7) of your move.`;
 }
 
 // One finished game as a single line from player p's point of view. `n` is
@@ -950,20 +1018,23 @@ function stateMessage(p, g){
   L.push(notesText(p));
   L.push("");
   L.push(`Current game (game ${state.records.length + 1}):`);
-  L.push(positionText(g, "Current board"));
+  L.push(positionText(g, "Current board", p, true));
   L.push("");
   L.push(tableTalk(p, g));
   L.push("");
-  L.push("It is your turn. Write your commentary, then end with a final line that is exactly the column number you want to play.");
+  L.push("Your private plan from your previous move (only you can see this):");
+  L.push(state.plans[p] || "(none)");
+  L.push("");
+  L.push("It is your turn. Reply with the column number you'd like to play.");
   return L.join("\n");
 }
 
-// The game's commentary from both players in move order, from player p's
-// point of view. Comes from the `say` field playOneGame sets on each move;
-// moves without commentary are skipped. Not part of game records: it is
-// shown during the game and once more in the notes update after it.
+// The game's tell_opponent messages from both players in move order, from
+// player p's point of view. Comes from the `say` field playOneGame sets on
+// each move; moves without messages are skipped. Not part of game records:
+// it is shown during the game and once more in the notes update after it.
 function tableTalk(p, g){
-  const L = ["Table talk this game:"];
+  const L = ["Table talk this game (messages sent with tell_opponent):"];
   g.moves.forEach((m, i) => {
     if (!m.say) return;
     const who = (m.p === RED ? "Red" : "Yellow") + (m.p === p ? " (you)" : "");
@@ -976,9 +1047,11 @@ function tableTalk(p, g){
 }
 
 // A position in every representation the models get: move list, last move,
-// column stacks, piece coordinates, and the grid. Shared by the turn message
-// and play_out results so both always look the same.
-function positionText(g, boardLabel){
+// column stacks, piece coordinates, lines, valid moves with their results,
+// and the grid. Shared by the turn message and play_out results so both
+// always look the same. `toMove` is the player whose valid moves are listed
+// (null when the game is over); `you` is true when that player is the reader.
+function positionText(g, boardLabel, toMove, you){
   const L = [];
   const last = g.moves[g.moves.length - 1];
   L.push("Move list: " + g.toMoveList());
@@ -993,8 +1066,17 @@ function positionText(g, boardLabel){
   L.push("  Red:    " + g.toPieceList(RED));
   L.push("  Yellow: " + g.toPieceList(YELLOW));
   L.push("");
-  L.push('Lines (cells in order; "+" = empty and playable now, "." = empty, not yet playable):');
+  L.push('Lines (cells in order; "+" = empty and playable now; a number = empty, with that many pieces needed in its column before it is playable):');
   L.push(g.toLines());
+  L.push("");
+  if (!toMove){
+    L.push("No valid moves: the game is over.");
+  } else {
+    L.push(you ? "Your valid moves this turn are:"
+               : `Valid moves for ${toMove === RED ? "Red" : "Yellow"} (to move) are:`);
+    L.push("");
+    L.push(g.toMoves(toMove, you));
+  }
   L.push("");
   L.push(`${boardLabel}. Y=Yellow. R=Red.`);
   L.push(g.toText());
@@ -1004,7 +1086,7 @@ function positionText(g, boardLabel){
 /* ============================================================
    play_out analysis tool
    ============================================================ */
-// The only tool offered. It replays columns on a copy of the current game and
+// The analysis tool. It replays columns on a copy of the current game and
 // reports positions and rule outcomes (landing cells, illegal moves, wins,
 // draws). It deliberately never evaluates: no threats, no scores, no
 // suggestions. Which lines to examine is the model's own problem.
@@ -1012,7 +1094,7 @@ const PLAY_OUT_TOOL = {
   type: "function",
   function: {
     name: "play_out",
-    description: "Analysis board. Plays a sequence of columns from the current position, alternating moves starting with you, and shows where each piece landed and the resulting position. Stops at an illegal move or when the game ends. It does not evaluate positions.",
+    description: "Plays a sequence of columns on a private analysis board, starting from the current position and alternating moves starting with you. Returns where each piece landed and the resulting position in the same format as your turn message: move list, columns, lines, valid moves with their results, and grid. Stops at an illegal move or when the game ends. It does not evaluate positions and never affects the real game. Only you see the result.",
     parameters: {
       type: "object",
       properties: {
@@ -1026,6 +1108,82 @@ const PLAY_OUT_TOOL = {
     },
   },
 };
+
+// Private memory between a player's moves within a game (state.plans).
+// Offered on every move request with no call limit, and it does not count
+// against the play_out cap. Each call replaces the plan.
+const SAVE_PLAN_TOOL = {
+  type: "function",
+  function: {
+    name: "save_plan",
+    description: "Stores a private plan that is shown to you at the start of your next move in this game, replacing any previous plan. Only you see it; your opponent never does.",
+    parameters: {
+      type: "object",
+      properties: {
+        plan: { type: "string", description: "Your strategy, what you have worked out, and what to check on your next move." },
+      },
+      required: ["plan"],
+    },
+  },
+};
+
+// Table talk: messages a player sends to its opponent. getMove collects them
+// per move and playOneGame stores them on the move (`say`), from which
+// tableTalk() shows them to both players. Unlimited, like save_plan.
+const TELL_OPPONENT_TOOL = {
+  type: "function",
+  function: {
+    name: "tell_opponent",
+    description: "Sends a message to your opponent. It is added to this game's table talk, labeled with your color and move number. Both you and your opponent see the table talk on every move.",
+    parameters: {
+      type: "object",
+      properties: {
+        message: { type: "string", description: "What you want to say to your opponent." },
+      },
+      required: ["message"],
+    },
+  },
+};
+
+// Spectator commentary: shown in the log only, never sent to either model.
+// Unlimited, like save_plan.
+const COMMENTARY_TOOL = {
+  type: "function",
+  function: {
+    name: "commentary",
+    description: "Records commentary for the human spectators watching the game. It appears in the game log only; neither you nor your opponent ever sees it.",
+    parameters: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Your commentary on the position or your move." },
+      },
+      required: ["text"],
+    },
+  },
+};
+
+// Validates the single string argument `key` of a text tool. Returns the
+// trimmed string, or null when the arguments are malformed.
+function textArg(args, key){
+  try {
+    const parsed = JSON.parse(args || "{}");
+    return parsed && typeof parsed[key] === "string" ? parsed[key].trim() : null;
+  } catch (e) { return null; }
+}
+
+// Validates and applies one save_plan call for player p. Returns
+// { text, summary } like runPlayOut.
+function runSavePlan(p, args){
+  let parsed;
+  try { parsed = JSON.parse(args || "{}"); } catch (e) {
+    return { text: "Error: arguments are not valid JSON. The plan was not saved.", summary: "invalid JSON arguments" };
+  }
+  if (!parsed || typeof parsed.plan !== "string"){
+    return { text: "Error: plan must be a string. The plan was not saved.", summary: "invalid plan" };
+  }
+  state.plans[p] = parsed.plan.trim();
+  return { text: "Plan saved.", summary: "saved" };
+}
 
 // Validates and runs one play_out call against game `g`. Returns
 // { ok, text, summary }: `text` is the tool result body (without the budget
@@ -1044,7 +1202,7 @@ function runPlayOut(g, name, args){
 
   const a = g.clone();
   const played = [], landed = [];
-  let outcome = null;
+  let outcome = null, ended = false;
   for (let i = 0; i < moves.length; i++){
     const c = moves[i] - 1, p = a.turn;
     const tag = (p === RED ? "R" : "Y") + moves[i];
@@ -1060,9 +1218,11 @@ function runPlayOut(g, name, args){
       const cells = [...win].sort((x, y) => x[0] - y[0] || x[1] - y[1]).map(([cc, rr]) => `(${cc + 1},${rr + 1})`).join(" ");
       outcome = `${p === RED ? "Red" : "Yellow"} wins with ${cells}.`;
       if (i < moves.length - 1) outcome += " Remaining moves were not played.";
+      ended = true;
       break;
     }
     if (a.moves.length >= ROWS * COLS){
+      ended = true;
       outcome = "Draw: board full.";
       if (i < moves.length - 1) outcome += " Remaining moves were not played.";
       break;
@@ -1074,29 +1234,33 @@ function runPlayOut(g, name, args){
   L.push("Played: " + (played.length ? played.join(", ") : "(nothing)"));
   if (outcome) L.push(outcome);
   L.push("");
-  L.push(positionText(a, "Resulting board"));
+  // Valid moves are named by color: after a sequence it may be either side's
+  // turn, and "your turn" would misdescribe a hypothetical position.
+  L.push(positionText(a, "Resulting board", ended ? null : a.turn, false));
   const summary = `[${moves.join(", ")}] → ` + (landed.length ? "landed " + landed.join(" ") : "nothing played") + (outcome ? ` · ${outcome}` : "");
   return { ok: true, text: L.join("\n"), summary };
 }
 
 // Budget line appended to every tool result, including errors.
+// Names play_out explicitly because save_plan is never budgeted.
 function budgetLine(left){
-  if (left <= 0) return "No tool calls remain; reply with your move.";
-  return `${left} tool call${left === 1 ? "" : "s"} remain${left === 1 ? "s" : ""}`;
+  if (left <= 0) return "No play_out calls remain; reply with your move.";
+  return `${left} play_out call${left === 1 ? "" : "s"} remain${left === 1 ? "s" : ""}`;
 }
 
 /* ============================================================
    Reply parsing
    ============================================================ */
-// The move is the last non-empty line, which must be exactly one digit 1-7;
-// everything before it is commentary. Anything else on the last line
-// ("Column 4", "**4**", "4.") returns null and triggers a re-prompt.
-// Returns { move, commentary } or null.
+// The move is the last non-empty line, which must be exactly one digit 1-7.
+// The prompt asks for only the digit; prose before it is tolerated (and
+// shared with no one). Anything else on the last line ("Column 4", "**4**",
+// "4.") returns null and triggers a re-prompt.
+// Returns { move, text } or null; `text` is the prose before the digit.
 function parseReply(raw){
   const lines = String(raw || "").trim().split("\n");
   const m = lines[lines.length - 1].trim().match(/^([1-7])$/);
   if (!m) return null;
-  return { move: parseInt(m[1], 10), commentary: lines.slice(0, -1).join("\n").trim() };
+  return { move: parseInt(m[1], 10), text: lines.slice(0, -1).join("\n").trim() };
 }
 
 /* ============================================================
@@ -1173,13 +1337,64 @@ function argText(a){
   return typeof a === "string" ? a : JSON.stringify(a);
 }
 
+/* ============================================================
+   Inspection trace
+   ============================================================ */
+// Every model call of the current game (moves, and the notes updates after
+// it), with the exact request body and the parsed response. Reset when a
+// game starts. Read it from devtools with calls() or calls(i).
+const trace = { game: 0, calls: [] };
+
+function traceStart(body, meta){
+  // Deep copy: the turn's message list keeps growing after this call.
+  const entry = { ...(meta || {}), at: new Date().toISOString(),
+                  request: JSON.parse(JSON.stringify(body)), response: undefined };
+  trace.calls.push(entry);
+  return entry;
+}
+
+// JSON-shaped, but strings print with their real line breaks (continuation
+// lines aligned under the opening quote) and nothing is escaped or omitted,
+// so long prompts stay readable. Deliberately not valid JSON.
+function readable(v, col){
+  const pad = n => " ".repeat(n);
+  if (v === undefined) return "(pending)";
+  if (v === null || typeof v !== "object"){
+    if (typeof v !== "string") return String(v);
+    return '"' + v.split("\n").join("\n" + pad(col + 1)) + '"';
+  }
+  if (Array.isArray(v)){
+    if (!v.length) return "[]";
+    return "[\n" + v.map(x => pad(col + 2) + readable(x, col + 2)).join(",\n") + "\n" + pad(col) + "]";
+  }
+  const keys = Object.keys(v);
+  if (!keys.length) return "{}";
+  return "{\n" + keys.map(k => {
+    const lead = `${pad(col + 2)}"${k}": `;
+    // Strings align under their opening quote; nested containers indent
+    // one level, as in ordinary pretty-printed JSON.
+    return lead + readable(v[k], typeof v[k] === "string" ? lead.length : col + 2);
+  }).join(",\n") + "\n" + pad(col) + "}";
+}
+
+// calls() returns every call of the current game; calls(i) returns call i.
+window.calls = function(i){
+  const pick = i == null ? trace.calls.map((c, n) => [n, c]) : [[i, trace.calls[i]]];
+  if (!pick.length || !pick[0][1]) return `No calls recorded for game ${trace.game}${i == null ? "" : ` at index ${i}`}.`;
+  return pick.map(([n, c]) => {
+    const { request, response, ...meta } = c;
+    return `calls[${n}]: ${readable(meta, 0)}\nrequest:\n${readable(request, 0)}\nresponse:\n${readable(response, 0)}`;
+  }).join("\n\n");
+};
+
 // One chat-completions call, always routed through serve.py's same-origin
 // /proxy. The endpoint may be a base URL (".../v1") or the full
 // ".../chat/completions" URL. `tools` (optional) is the tool list to offer.
 // Returns { text, reasoning, reasoningField, usage, finishReason, toolCalls }
 // whether or not the response was streamed; finishReason is "length" when
 // max_tokens cut it off, and toolCalls is [{ id, name, arguments }].
-async function chat(cfg, messages, onDelta, tools){
+// `meta` labels the call in the inspection trace (see calls()).
+async function chat(cfg, messages, onDelta, tools, meta){
   const ctrl = new AbortController();
   state.abort = ctrl;
 
@@ -1196,6 +1411,21 @@ async function chat(cfg, messages, onDelta, tools){
     body.stream_options = { include_usage: true };
   }
 
+  // Every call is recorded with the exact body sent and what came back (or
+  // the error), so calls() can show the whole protocol exchange.
+  const entry = traceStart(body, meta);
+  try {
+    const out = await post(cfg, url, body, ctrl, onDelta);
+    entry.response = out;
+    return out;
+  } catch (e){
+    entry.response = { error: e.name === "AbortError" ? "aborted" : e.message };
+    throw e;
+  }
+}
+
+// The HTTP half of chat(): sends `body` and parses the reply.
+async function post(cfg, url, body, ctrl, onDelta){
   const headers = { "Content-Type": "application/json" };
   if (cfg.key) headers["Authorization"] = "Bearer " + cfg.key;
 
@@ -1247,14 +1477,18 @@ async function chat(cfg, messages, onDelta, tools){
 // Asks player p for a move. Each turn is one fresh conversation that starts
 // with the system prompt and a single stateMessage carrying past records,
 // notes, and the current position; tool exchanges and retries are appended
-// within the turn. Nothing from the turn is kept afterwards.
+// within the turn. Nothing from the turn is kept afterwards except the
+// player's plan, if it calls save_plan.
 //
-// Within the turn the model may call play_out up to state.toolLimit times.
+// Within the turn the model may call play_out up to state.toolLimit times,
+// and save_plan any number of times.
 // Protocol:
 // - A response containing tool calls is a tool step: the calls run (any text
-//   is ignored) and the turn continues. Every call counts against the cap,
-//   malformed ones included, so the loop always ends. Once the cap is used
-//   up, requests are sent without the tool.
+//   is ignored) and the turn continues. Every play_out call counts against
+//   the cap, malformed ones included. Once the cap is used up, requests are
+//   sent without play_out. save_plan is always offered and unlimited by
+//   decision, so a model that keeps calling only save_plan is not bounded;
+//   Stop ends such a turn.
 // - A response without tool calls is the final answer, parsed by parseReply.
 //   Failed answers are retried up to MAX_RETRIES times; retries keep the
 //   turn's tool exchanges and do not reset the cap. A generation cut off by
@@ -1281,6 +1515,8 @@ async function getMove(p, g){
   let callsLeft = state.toolLimit;
   let callSeq = 0;
   let generation = 0;
+  // tell_opponent messages sent this turn, in order; becomes the move's `say`.
+  const messages = [];
 
   for (let attempt = 1; attempt <= MAX_RETRIES; ){
     // One reasoning section per generation; the first was made by startTurnEntry.
@@ -1295,7 +1531,11 @@ async function getMove(p, g){
       return reasonBody;
     };
 
-    const offered = callsLeft > 0;
+    // save_plan, tell_opponent and commentary are always offered; play_out
+    // only while calls remain.
+    const playOutOffered = callsLeft > 0;
+    const always = [SAVE_PLAN_TOOL, TELL_OPPONENT_TOOL, COMMENTARY_TOOL];
+    const tools = playOutOffered ? [PLAY_OUT_TOOL, ...always] : always;
     // Live reasoning display keeps only the last 20,000 characters.
     const res = await chat(cfg, msgs, (type, chunk) => {
       if (type === "reasoning"){
@@ -1303,7 +1543,8 @@ async function getMove(p, g){
         if (reasonBody.textContent.length > 20000) reasonBody.textContent = reasonBody.textContent.slice(-20000);
         autoScrollStream(p);
       }
-    }, offered ? [PLAY_OUT_TOOL] : null);
+    }, tools, { player: `${p} (${p === RED ? "Red" : "Yellow"})`, kind: "move",
+                move: g.moves.length + 1, attempt, generation });
 
     // Stop may land after the response already completed (so no AbortError);
     // bail out rather than play the move.
@@ -1327,27 +1568,72 @@ async function getMove(p, g){
       // Text alongside tool calls does not count as an answer, but is shown
       // so it is visible what the model wrote.
       if (res.text && res.text.trim()) put(reasoningSection("text with tool calls (not used as the answer)", res.text, false));
+      let calledWithdrawn = false;
       for (const tc of am.tool_calls){
-        let body, summary;
-        if (callsLeft > 0){
-          callsLeft--;
-          const r = runPlayOut(g, tc.function.name, tc.function.arguments);
+        let body, summary, label;
+        if (tc.function.name === "save_plan"){
+          const r = runSavePlan(p, tc.function.arguments);
           body = r.text; summary = r.summary;
+          label = `save_plan ${summary}`;
+          // Shown inline, not collapsed: the plan is the model's own account
+          // of its strategy and is meant to be read as the game goes.
+          const planEl = mk("div", "plan");
+          planEl.appendChild(mk("div", "plan-label", label));
+          if (summary === "saved") planEl.appendChild(mk("div", "plan-body", state.plans[p] || "(empty)"));
+          put(planEl);
+        } else if (tc.function.name === "tell_opponent" || tc.function.name === "commentary"){
+          const key = tc.function.name === "tell_opponent" ? "message" : "text";
+          const text = textArg(tc.function.arguments, key);
+          if (text === null){
+            body = `Error: ${key} must be a string. Nothing was sent.`;
+            summary = `invalid ${key}`;
+          } else if (tc.function.name === "tell_opponent"){
+            messages.push(text);
+            body = "Message added to the table talk.";
+            summary = "sent";
+          } else {
+            body = "Commentary recorded.";
+            summary = "recorded";
+          }
+          label = `${tc.function.name} ${summary}`;
+          // Inline, like save_plan: these are meant to be read as they happen.
+          const el = mk("div", tc.function.name === "tell_opponent" ? "plan tell" : "plan commentary-tool");
+          el.appendChild(mk("div", "plan-label", label));
+          if (text) el.appendChild(mk("div", "plan-body", text));
+          put(el);
         } else {
-          body = "Error: the call was not run.";
-          summary = "not run";
+          // play_out and any unknown tool name share the play_out budget, so
+          // every non-save_plan call counts against the cap.
+          if (!playOutOffered){
+            calledWithdrawn = true;
+            body = "Error: play_out is not available for the rest of this move.";
+            summary = "not run";
+          } else if (callsLeft > 0){
+            callsLeft--;
+            const r = runPlayOut(g, tc.function.name, tc.function.arguments);
+            body = r.text; summary = r.summary;
+          } else {
+            body = "Error: the call was not run.";
+            summary = "not run";
+          }
+          label = tc.function.name === "play_out" ? `play_out ${summary}` : summary;
         }
-        const content = body + "\n" + budgetLine(callsLeft);
+        // The play_out budget line ends every result while the tool exists.
+        const content = state.toolLimit > 0 ? body + "\n" + budgetLine(callsLeft) : body;
         msgs.push({ role: "tool", tool_call_id: tc.id, content });
-        const label = tc.function.name === "play_out" ? `play_out ${summary}` : summary;
-        put(toolCallLine(`${label} · ${budgetLine(callsLeft)}`, content));
+        // The text tools already have their inline entry; only play_out and
+        // unknown calls get the collapsible result line.
+        if (!["save_plan", "tell_opponent", "commentary"].includes(tc.function.name)){
+          put(toolCallLine(`${label} · ${budgetLine(callsLeft)}`, content));
+        }
       }
       autoScrollStream(p);
-      if (offered) continue;
-      // The tool was not offered but the model called one anyway: the error
-      // results above tell it so, and the attempt counts as failed so a model
-      // that keeps calling cannot loop forever.
-      put(mk("div", "note", `Called a tool when none was available (attempt ${attempt}/${MAX_RETRIES}) — re-prompting…`));
+      if (!calledWithdrawn) continue;
+      // play_out was not offered but the model called it (or another unknown
+      // tool) anyway: the error results above tell it so, and the attempt
+      // counts as failed so a model that keeps calling cannot loop forever.
+      // save_plan has no such bound by design.
+      put(mk("div", "note", `Called a tool that was not available (attempt ${attempt}/${MAX_RETRIES}) — re-prompting…`));
       attempt++;
       continue;
     }
@@ -1362,10 +1648,12 @@ async function getMove(p, g){
     if (moveInt !== null && legalCols.includes(moveInt - 1)) col = moveInt - 1;
 
     if (col !== null){
-      if (parsed.commentary) put(mk("div", "commentary", parsed.commentary));
+      // Prose before the digit goes to no one; it is shown here only so the
+      // log reflects everything the model wrote.
+      if (parsed.text) put(reasoningSection("reply text (not shared)", parsed.text, false));
       moveEl.textContent = "→ column " + (col + 1);
       autoScrollStream(p);
-      return { col, commentary: parsed.commentary };
+      return { col, messages };
     }
 
     // A reply cut off by max_tokens is reported as such, not as a bad answer.
@@ -1374,13 +1662,13 @@ async function getMove(p, g){
     if (truncated){
       state.stats[p].truncated++;
       why = `Hit max tokens (${cfg.maxTokens}) before answering`;
-      retry = `Your response was cut off before it gave a move. Legal columns right now are: ${legalHuman.join(", ")}. End your reply with a final line that is exactly one column number.`;
+      retry = `Your response was cut off before it gave a move. Legal columns right now are: ${legalHuman.join(", ")}. Reply with only the column number.`;
     } else if (moveInt !== null){
       why = `Column ${moveInt} is full`;
-      retry = `Column ${moveInt} is full. Legal columns right now are: ${legalHuman.join(", ")}. End your reply with a final line that is exactly one column number.`;
+      retry = `Column ${moveInt} is full. Legal columns right now are: ${legalHuman.join(", ")}. Reply with only the column number.`;
     } else {
-      why = "Last line was not a single column number";
-      retry = `The last line of your reply must be exactly one column number. Legal columns right now are: ${legalHuman.join(", ")}. End your reply with a final line that is exactly one column number.`;
+      why = "Reply was not a column number";
+      retry = `Your reply must be only the column number. Legal columns right now are: ${legalHuman.join(", ")}. Reply with only the column number.`;
     }
     updateTokenDisplay(p);
     put(mk("div", "note", `${why} (attempt ${attempt}/${MAX_RETRIES}) — re-prompting…`));
@@ -1399,7 +1687,8 @@ async function getMove(p, g){
   put(mk("div", "note", `No valid move after ${MAX_RETRIES} attempts — playing random column ${fallback + 1}.`));
   moveEl.textContent = "→ column " + (fallback + 1) + " (fallback)";
   autoScrollStream(p);
-  return { col: fallback };
+  // Messages sent during the turn were sent; they stand even on a fallback.
+  return { col: fallback, messages };
 }
 
 /* ============================================================
@@ -1437,7 +1726,7 @@ async function updateNotes(p){
       if (reasonBody.textContent.length > 20000) reasonBody.textContent = reasonBody.textContent.slice(-20000);
       autoScrollStream(p);
     }
-  });
+  }, null, { player: `${p} (${p === RED ? "Red" : "Yellow"})`, kind: "notes", game: n });
   if (!state.running) throw new StopError();
   updateTokensAfterCall(p, res.usage, msgs);
 
@@ -1470,6 +1759,11 @@ async function playOneGame(){
   state.gameNum++;
   const g = new Game();
   state.game = g;
+  // Plans are per game; lessons across games belong in the notes.
+  state.plans = { 1: "", 2: "" };
+  // The inspection trace covers one game (plus the notes updates after it).
+  trace.game = state.gameNum;
+  trace.calls = [];
   // First move alternates: Red opens odd-numbered games, Yellow even ones.
   // gameNum restarts at 0 each series, so every series opens with Red.
   g.turn = (state.gameNum % 2 === 1) ? RED : YELLOW;
@@ -1496,8 +1790,8 @@ async function playOneGame(){
 
     const c = result.col;
     const r = g.drop(c, p);
-    // Table talk for this move; empty for fallback moves.
-    g.moves[g.moves.length - 1].say = result.commentary || "";
+    // Table talk for this move: its tell_opponent messages, one per line.
+    g.moves[g.moves.length - 1].say = (result.messages || []).join("\n");
     const winCells = g.checkWinFrom(c, r, p);
 
     if (winCells){ g.over = true; g.winner = p; g.winCells = winCells; }

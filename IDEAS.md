@@ -10,7 +10,6 @@ Information a human player sees at a glance.
 ## Memory and learning
 Information a human player remembers.
 
-- **Private per-turn plan:** a short note the model writes for itself each move, carried to its next turn and hidden from the opponent. A human remembers what they were planning; the model currently starts every turn from nothing.
 - **Plan review after each game:** the notes update sees the model's private plans from the game alongside what happened. A human can recall what they intended and compare it with the outcome.
 - **Post-game analysis with `play_out`:** the notes update may use the analysis board to examine positions from the finished game, as a human replays a game on a board afterward.
 - **Persistence across reloads:** records and notes saved in the browser, so a reload doesn't erase memory a human would retain across sessions.
